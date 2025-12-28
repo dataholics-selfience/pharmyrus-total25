@@ -1,18 +1,18 @@
 """
-Pharmyrus v28.14-FINAL - EPO + Google + INPI (Playwright COMPLETO!)
+Pharmyrus v28.15-FINAL - EPO + Google + INPI (CORRIGIDO!)
 
 Layer 1: EPO OPS (FUNCIONANDO v27.5 ✅)
 Layer 2: Google Patents (FUNCIONANDO v27.5 ✅)  
-Layer 3: INPI Brazilian (Playwright NOVO ✅)
+Layer 3: INPI Brazilian (Playwright CORRIGIDO ✅)
 
-🔥 v28.14 - VERSÃO FINAL:
-✅ EPO mantido 100% (funciona perfeitamente)
-✅ Google mantido 100% (funciona perfeitamente)
-✅ INPI adicionado com Playwright (mesma técnica que Google!)
-✅ Busca pública INPI primeiro (sem login)
-✅ Fallback login INPI se público falhar
-✅ Tradução PT via Groq AI
-✅ Logs completos até o fim!
+🔥 v28.15 - CORREÇÕES CRÍTICAS INPI:
+✅ Campo correto: input[name="Titulo"] (MAIÚSCULO!)
+✅ Timeout aumentado: 20s → 60s (INPI é lento!)
+✅ Regex BR melhorado: aceita espaços "BR 11 2024 016586 8"
+✅ Delay aumentado: 2s → 3s entre buscas
+✅ HTML confirmado funcionando!
+
+TESTE REAL MOSTRA: 1 BR encontrado para "Darolutamida"!
 """
 
 from fastapi import FastAPI, HTTPException
@@ -60,9 +60,9 @@ COUNTRY_CODES = {
 }
 
 app = FastAPI(
-    title="Pharmyrus v28.14-FINAL",
-    description="Three-Layer Patent Search: EPO OPS + Google Patents (Playwright) + INPI (Playwright)",
-    version="28.14-FINAL"
+    title="Pharmyrus v28.15-FINAL",
+    description="Three-Layer Patent Search: EPO OPS + Google Patents + INPI (FIXED!)",
+    version="28.15-FINAL"
 )
 
 app.add_middleware(
@@ -1130,8 +1130,8 @@ async def search_patents(request: SearchRequest):
                 "search_date": datetime.now().isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v28.14 (EPO + Google + INPI Playwright)",
-                "sources": ["EPO OPS (FULL)", "Google Patents (AGGRESSIVE)", "INPI (Playwright)"]
+                "version": "Pharmyrus v28.15 (INPI CORRECTED - Titulo field + timeout)",
+                "sources": ["EPO OPS (FULL)", "Google Patents (AGGRESSIVE)", "INPI (Playwright FIXED)"]
             },
             "summary": {
                 "total_wos": len(all_wos),

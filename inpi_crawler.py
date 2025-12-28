@@ -182,12 +182,12 @@ class INPICrawler:
                     try:
                         # URL INPI busca avançada
                         url = "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchAvancado.jsp"
-                        await page.goto(url, wait_until='domcontentloaded', timeout=20000)
+                        await page.goto(url, wait_until='domcontentloaded', timeout=60000)
                         
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)
                         
-                        # Preencher campo "(54) Título:"
-                        await page.fill('input[name="titulo"]', term)
+                        # Preencher campo "(54) Título:" (MAIÚSCULO!)
+                        await page.fill('input[name="Titulo"]', term)
                         
                         # Clicar em "Pesquisar"
                         await page.click('input[type="submit"][value="Pesquisar"]')
@@ -198,25 +198,29 @@ class INPICrawler:
                         content = await page.content()
                         
                         # Regex para BR numbers: BR112024016586, BRPI0610634, etc
-                        br_matches = re.findall(r'BR[A-Z]*\d{11,13}', content)
+                        # Aceita formato com espaços: "BR 11 2024 016586 8"
+                        br_matches = re.findall(r'BR\s*[A-Z]*\s*\d[\d\s]{10,15}', content)
                         
                         if br_matches:
                             logger.info(f"      ✅ Found {len(br_matches)} BR numbers")
                             
                             for br in br_matches:
-                                if br not in self.found_brs:
-                                    self.found_brs.add(br)
+                                # Remover espaços: "BR 11 2024 016586 8" → "BR112024016586"
+                                br_clean = br.replace(" ", "")
+                                
+                                if br_clean not in self.found_brs:
+                                    self.found_brs.add(br_clean)
                                     all_patents.append({
-                                        "patent_number": br,
+                                        "patent_number": br_clean,
                                         "country": "BR",
                                         "source": "INPI",
                                         "search_term": term
                                     })
-                                    logger.info(f"         → {br}")
+                                    logger.info(f"         → {br_clean}")
                         else:
                             logger.info(f"      ⚠️  No results for '{term}'")
                         
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)  # INPI é lento, dar tempo!
                     
                     except PlaywrightTimeout:
                         logger.warning(f"      ⏱️  Timeout for '{term}'")
