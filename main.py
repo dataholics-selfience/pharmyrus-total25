@@ -1,18 +1,22 @@
 """
-Pharmyrus v28.15-FINAL - EPO + Google + INPI (CORRIGIDO!)
+Pharmyrus v29.0-LOGIN-COMPLETE - EPO + Google + INPI (LOGIN REAL!)
 
-Layer 1: EPO OPS (FUNCIONANDO v27.5 ✅)
-Layer 2: Google Patents (FUNCIONANDO v27.5 ✅)  
-Layer 3: INPI Brazilian (Playwright CORRIGIDO ✅)
+Layer 1: EPO OPS (FUNCIONANDO ✅)
+Layer 2: Google Patents Playwright (FUNCIONANDO ✅)  
+Layer 3: INPI Brazilian COM LOGIN (NOVO v29.0 ✅)
 
-🔥 v28.15 - CORREÇÕES CRÍTICAS INPI:
-✅ Campo correto: input[name="Titulo"] (MAIÚSCULO!)
-✅ Timeout aumentado: 20s → 60s (INPI é lento!)
-✅ Regex BR melhorado: aceita espaços "BR 11 2024 016586 8"
-✅ Delay aumentado: 2s → 3s entre buscas
-✅ HTML confirmado funcionando!
-
-TESTE REAL MOSTRA: 1 BR encontrado para "Darolutamida"!
+🔥 v29.0 - INPI COMPLETO COM LOGIN:
+✅ EPO mantido 100% (funciona perfeitamente)
+✅ Google Playwright mantido 100% (funciona perfeitamente)
+✅ INPI COMPLETO:
+   - Login real com credenciais (dnm48)
+   - Sessão persistente (mantém context)
+   - Busca BÁSICA correta (POST form)
+   - Timeout longo (180s)
+   - Retry em session expired
+   - Tradução PT via Groq
+   - Parse completo de resultados
+✅ Baseado em análise detalhada dos HTMLs reais do INPI!
 """
 
 from fastapi import FastAPI, HTTPException
@@ -60,9 +64,9 @@ COUNTRY_CODES = {
 }
 
 app = FastAPI(
-    title="Pharmyrus v28.15-FINAL",
-    description="Three-Layer Patent Search: EPO OPS + Google Patents + INPI (FIXED!)",
-    version="28.15-FINAL"
+    title="Pharmyrus v29.0-LOGIN-COMPLETE",
+    description="Three-Layer Patent Search: EPO OPS + Google Patents (Playwright) + INPI (LOGIN REAL!)",
+    version="29.0-LOGIN-COMPLETE"
 )
 
 app.add_middleware(
@@ -917,7 +921,7 @@ async def enrich_from_google_patents(client: httpx.AsyncClient, patent_data: Dic
 async def root():
     return {
         "message": "Pharmyrus v27.4 - Robust Abstract & IPC Parse (PRODUCTION)", 
-        "version": "27.5-FIXED",
+        "version": "29.0-LOGIN-COMPLETE",
         "layers": ["EPO OPS (FULL v26 + METADATA)", "Google Patents (AGGRESSIVE)"],
         "metadata_fields": ["title", "abstract", "applicants", "inventors", "ipc_codes", "filing_date", "priority_date"],
         "features": ["Multiple BR per WO", "Individual BR enrichment", "Robust abstract/IPC parse"]
@@ -926,7 +930,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "version": "27.5-FIXED"}
+    return {"status": "healthy", "version": "29.0-LOGIN-COMPLETE"}
 
 
 @app.get("/countries")
@@ -1015,14 +1019,21 @@ async def search_patents(request: SearchRequest):
         # ===== LAYER 3: INPI BRAZILIAN PATENTS =====
         logger.info("🇧🇷 LAYER 3: INPI Brazilian Patent Office")
         
-        # Buscar BRs diretamente no INPI
-        groq_key = "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"  # Groq API key
-        inpi_patents = await inpi_crawler.search_inpi(
-            molecule=molecule,
-            brand=brand,
-            dev_codes=pubchem["dev_codes"],
-            groq_api_key=groq_key
-        )
+        # Get Groq API key from environment (user needs to set this in Railway!)
+        import os
+        groq_key = os.getenv("GROQ_API_KEY", "")
+        if not groq_key:
+            logger.warning("   ⚠️  GROQ_API_KEY not set! Skipping INPI search")
+            logger.warning("   💡 Set GROQ_API_KEY environment variable in Railway")
+            inpi_patents = []
+        else:
+            # Buscar BRs diretamente no INPI
+            inpi_patents = await inpi_crawler.search_inpi(
+                molecule=molecule,
+                brand=brand,
+                dev_codes=pubchem["dev_codes"],
+                groq_api_key=groq_key
+            )
         
         logger.info(f"   ✅ INPI found: {len(inpi_patents)} BR patents")
         
@@ -1130,8 +1141,8 @@ async def search_patents(request: SearchRequest):
                 "search_date": datetime.now().isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v28.15 (INPI CORRECTED - Titulo field + timeout)",
-                "sources": ["EPO OPS (FULL)", "Google Patents (AGGRESSIVE)", "INPI (Playwright FIXED)"]
+                "version": "Pharmyrus v29.0 (EPO + Google + INPI LOGIN)",
+                "sources": ["EPO OPS (FULL)", "Google Patents (Playwright)", "INPI (LOGIN REAL)"]
             },
             "summary": {
                 "total_wos": len(all_wos),

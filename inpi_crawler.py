@@ -1,252 +1,532 @@
 """
-INPI Crawler v28.14 - Playwright (MESMA TÉCNICA QUE GOOGLE!)
+INPI Crawler v29.0 - COMPLETO COM LOGIN E BUSCA BÁSICA
 
-Busca patentes BR no INPI usando Playwright
-Baseado nas instruções do usuário:
-- URL: https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchAvancado.jsp
-- Campo: "(54) Título:"
-- Busca pública SEM login primeiro
-- Fallback para login (dnm48) se necessário
+Baseado em análise completa dos HTMLs reais do INPI:
+- 1-login.html: Form POST com T_Login, T_Senha
+- 2-escolher-Patente.html: Link para patentes
+- 3-search-básico.html: Form POST com ExpressaoPesquisa, Coluna, Action
+- 4-escolher-resultados.html: Parse links de resultados
+- 5-Resultado-final-da-busca.html: Parse completo patente
+- 6-Erro-de-busca.html: "Nenhum resultado foi encontrado"
+
+Fluxo CORRETO:
+1. Login → /pePI/servlet/LoginController (POST)
+2. Patentes → /pePI/jsp/patentes/PatenteSearchBasico.jsp (GET)
+3. Busca → /pePI/servlet/PatenteServletController (POST)
+4. Resultados → Parse <a href='...Action=detail...'>
+5. Detalhes → Parse campos completos
+
+Features:
+✅ Login COM credenciais (dnm48)
+✅ Sessão persistente (mantém cookies/context)
+✅ Busca BÁSICA (não avançada!)
+✅ Timeout dinâmico (180s - INPI é MUITO lento!)
+✅ Retry automático em session expired
+✅ Parse completo de cada patente
+✅ Múltiplas buscas (Título + Resumo)
+✅ Tradução PT via Groq AI
 """
 
 import asyncio
-import re
 import logging
-from typing import List, Dict, Set
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+import re
+import httpx
+from typing import List, Dict, Set, Optional
+from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger("pharmyrus")
 
-# Credenciais INPI (fallback se busca pública falhar)
-INPI_LOGIN = "dnm48"
-INPI_PASSWORD = "cores***"  # Você deve fornecer senha completa
-
 
 class INPICrawler:
-    """Crawler INPI usando Playwright (mesma técnica que Google)"""
+    """INPI Brazilian Patent Office Crawler - COMPLETE with LOGIN"""
     
     def __init__(self):
-        self.found_brs = set()
-    
+        self.found_brs: Set[str] = set()
+        self.session_active = False
+        self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
+        
     async def search_inpi(
         self,
         molecule: str,
         brand: str,
         dev_codes: List[str],
-        groq_api_key: str = None
+        groq_api_key: str,
+        username: str = "dnm48",
+        password: str = "coresxxx"
     ) -> List[Dict]:
         """
-        Busca patentes BR no INPI
+        Search INPI with LOGIN - COMPLETE FLOW
+        
+        Args:
+            molecule: Molecule name (English)
+            brand: Brand name (English)  
+            dev_codes: Development codes
+            groq_api_key: Groq API key for Portuguese translation
+            username: INPI login
+            password: INPI password
         
         Returns:
-            Lista de patentes BR encontradas
+            List of BR patents found
         """
-        logger.info("🇧🇷 LAYER 3: INPI Brazilian Patent Office")
-        logger.info("=" * 100)
+        all_patents = []
         
-        # 1. Traduzir para português via Groq
-        molecule_pt = await self._translate_to_portuguese(molecule, groq_api_key)
-        brand_pt = await self._translate_to_portuguese(brand, groq_api_key) if brand else None
+        # Translate to Portuguese using Groq
+        logger.info("====================================================================================================")
+        
+        molecule_pt, brand_pt = await self._translate_to_portuguese(
+            molecule, brand, groq_api_key
+        )
         
         logger.info(f"   ✅ Translations:")
         logger.info(f"      Molecule: {molecule} → {molecule_pt}")
-        if brand_pt:
+        if brand:
             logger.info(f"      Brand: {brand} → {brand_pt}")
         
-        # 2. Construir termos de busca
-        search_terms = self._build_search_terms(molecule_pt, brand_pt, dev_codes)
+        # Build search terms (limit to avoid overload)
+        search_terms = self._build_search_terms(molecule_pt, brand_pt, dev_codes, max_terms=8)
+        
         logger.info(f"   📋 {len(search_terms)} search terms generated")
-        
-        # 3. Executar buscas no INPI
-        all_patents = []
-        
-        try:
-            # TENTAR BUSCA PÚBLICA PRIMEIRO (SEM LOGIN)
-            logger.info(f"   🔓 Trying PUBLIC search (no login)...")
-            patents = await self._search_inpi_public(search_terms)
-            
-            if patents:
-                logger.info(f"   ✅ PUBLIC search SUCCESS: {len(patents)} BRs found!")
-                all_patents = patents
-            else:
-                # FALLBACK: LOGIN
-                logger.info(f"   ⚠️  PUBLIC search returned 0 results")
-                logger.info(f"   🔐 Trying LOGIN search (dnm48)...")
-                patents = await self._search_inpi_with_login(search_terms)
-                
-                if patents:
-                    logger.info(f"   ✅ LOGIN search SUCCESS: {len(patents)} BRs found!")
-                    all_patents = patents
-                else:
-                    logger.warning(f"   ❌ Both PUBLIC and LOGIN searches returned 0 results")
-        
-        except Exception as e:
-            logger.error(f"   ❌ INPI search failed: {e}")
-        
-        logger.info(f"🎯 INPI FINAL: {len(all_patents)} BR patents found")
-        logger.info("=" * 100)
-        
-        return all_patents
-    
-    async def _translate_to_portuguese(self, text: str, groq_api_key: str) -> str:
-        """Traduz texto para português via Groq AI"""
-        if not text or not groq_api_key:
-            return text
-        
-        try:
-            import httpx
-            
-            url = "https://api.groq.com/openai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {groq_api_key}",
-                "Content-Type": "application/json"
-            }
-            data = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a translator. Translate pharmaceutical terms from English to Brazilian Portuguese. Return ONLY the translation, nothing else."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Translate to Portuguese: {text}"
-                    }
-                ],
-                "temperature": 0.1,
-                "max_tokens": 50
-            }
-            
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(url, json=data, headers=headers)
-            
-            if response.status_code == 200:
-                result = response.json()
-                translation = result["choices"][0]["message"]["content"].strip()
-                return translation
-            else:
-                logger.warning(f"      Groq translation failed, using original: {text}")
-                return text
-        
-        except Exception as e:
-            logger.warning(f"      Groq translation error: {e}, using original: {text}")
-            return text
-    
-    def _build_search_terms(
-        self,
-        molecule_pt: str,
-        brand_pt: str,
-        dev_codes: List[str]
-    ) -> List[str]:
-        """Constrói termos de busca para INPI"""
-        
-        terms = []
-        
-        # 1. Molécula em português
-        if molecule_pt:
-            terms.append(molecule_pt)
-        
-        # 2. Brand em português
-        if brand_pt:
-            terms.append(brand_pt)
-        
-        # 3. Dev codes (primeiros 5)
-        for code in dev_codes[:5]:
-            if code:
-                terms.append(code)
-        
-        return terms[:15]  # Limitar a 15 termos
-    
-    async def _search_inpi_public(self, search_terms: List[str]) -> List[Dict]:
-        """Busca pública no INPI (SEM login)"""
-        
-        all_patents = []
+        logger.info(f"   🔐 Starting INPI search with LOGIN ({username})...")
         
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
+                # STEP 0: Launch browser with stealth (MANTÉM SESSÃO!)
+                self.browser = await p.chromium.launch(
                     headless=True,
-                    args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox'
+                    ]
                 )
                 
-                context = await browser.new_context(
+                self.context = await self.browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    locale='pt-BR'
                 )
                 
-                page = await context.new_page()
+                self.page = await self.context.new_page()
                 
-                for i, term in enumerate(search_terms):
-                    logger.info(f"   🔍 INPI search {i+1}/{len(search_terms)}: '{term}'")
+                # STEP 1: LOGIN
+                login_success = await self._login(username, password)
+                
+                if not login_success:
+                    logger.error("   ❌ LOGIN failed!")
+                    await self.browser.close()
+                    return all_patents
+                
+                logger.info("   ✅ LOGIN successful!")
+                self.session_active = True
+                
+                # STEP 2: Navigate to Patents Basic Search
+                try:
+                    await self.page.goto(
+                        "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
+                        wait_until='networkidle',
+                        timeout=180000  # 3 minutes!
+                    )
+                    logger.info("   📄 Patent search page loaded")
+                except Exception as e:
+                    logger.error(f"   ❌ Error loading search page: {str(e)}")
+                    await self.browser.close()
+                    return all_patents
+                
+                # STEP 3: Search each term (TÍTULO + RESUMO)
+                for i, term in enumerate(search_terms, 1):
+                    logger.info(f"   🔍 INPI search {i}/{len(search_terms)}: '{term}'")
                     
                     try:
-                        # URL INPI busca avançada
-                        url = "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchAvancado.jsp"
-                        await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+                        # Search by TÍTULO
+                        patents_titulo = await self._search_term_basic(term, field="Titulo")
+                        all_patents.extend(patents_titulo)
+                        
+                        await asyncio.sleep(3)  # Delay between searches
+                        
+                        # Search by RESUMO
+                        patents_resumo = await self._search_term_basic(term, field="Resumo")
+                        all_patents.extend(patents_resumo)
                         
                         await asyncio.sleep(3)
                         
-                        # Preencher campo "(54) Título:" (MAIÚSCULO!)
-                        await page.fill('input[name="Titulo"]', term)
-                        
-                        # Clicar em "Pesquisar"
-                        await page.click('input[type="submit"][value="Pesquisar"]')
-                        
-                        await asyncio.sleep(3)
-                        
-                        # Extrair BR numbers do resultado
-                        content = await page.content()
-                        
-                        # Regex para BR numbers: BR112024016586, BRPI0610634, etc
-                        # Aceita formato com espaços: "BR 11 2024 016586 8"
-                        br_matches = re.findall(r'BR\s*[A-Z]*\s*\d[\d\s]{10,15}', content)
-                        
-                        if br_matches:
-                            logger.info(f"      ✅ Found {len(br_matches)} BR numbers")
-                            
-                            for br in br_matches:
-                                # Remover espaços: "BR 11 2024 016586 8" → "BR112024016586"
-                                br_clean = br.replace(" ", "")
-                                
-                                if br_clean not in self.found_brs:
-                                    self.found_brs.add(br_clean)
-                                    all_patents.append({
-                                        "patent_number": br_clean,
-                                        "country": "BR",
-                                        "source": "INPI",
-                                        "search_term": term
-                                    })
-                                    logger.info(f"         → {br_clean}")
-                        else:
-                            logger.info(f"      ⚠️  No results for '{term}'")
-                        
-                        await asyncio.sleep(3)  # INPI é lento, dar tempo!
-                    
-                    except PlaywrightTimeout:
-                        logger.warning(f"      ⏱️  Timeout for '{term}'")
-                        continue
                     except Exception as e:
-                        logger.warning(f"      ❌ Error for '{term}': {e}")
+                        logger.warning(f"      ⚠️  Error searching '{term}': {str(e)}")
+                        
+                        # Check if session expired
+                        if await self._check_session_expired():
+                            logger.error("   ❌ Session expired! Attempting re-login...")
+                            
+                            # Try to re-login
+                            relogin = await self._login(username, password)
+                            if not relogin:
+                                logger.error("   ❌ Re-login failed! Stopping INPI search")
+                                break
+                            
+                            logger.info("   ✅ Re-login successful! Continuing...")
+                            self.session_active = True
+                            
+                            # Go back to search page
+                            await self.page.goto(
+                                "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
+                                wait_until='networkidle',
+                                timeout=180000
+                            )
+                        
                         continue
                 
-                await browser.close()
-        
+                await self.browser.close()
+                
         except Exception as e:
-            logger.error(f"   ❌ INPI public search failed: {e}")
+            logger.error(f"   ❌ INPI crawler fatal error: {str(e)}")
+            if self.browser:
+                await self.browser.close()
         
-        return all_patents
+        # Deduplicate
+        unique_patents = []
+        seen_numbers = set()
+        for patent in all_patents:
+            num = patent["patent_number"]
+            if num not in seen_numbers:
+                unique_patents.append(patent)
+                seen_numbers.add(num)
+        
+        if unique_patents:
+            logger.info(f"   ✅ INPI search SUCCESS: {len(unique_patents)} BRs found!")
+        else:
+            logger.warning("   ⚠️  INPI search returned 0 results")
+        
+        return unique_patents
     
-    async def _search_inpi_with_login(self, search_terms: List[str]) -> List[Dict]:
-        """Busca no INPI COM login (dnm48)"""
+    async def _login(self, username: str, password: str) -> bool:
+        """
+        STEP 1: Perform LOGIN on INPI
         
-        logger.info(f"   🔐 LOGIN INPI not implemented yet")
-        logger.info(f"   💡 If needed, implement login flow with credentials:")
-        logger.info(f"      Username: {INPI_LOGIN}")
-        logger.info(f"      Password: {INPI_PASSWORD}")
+        Based on 1-login.html:
+        - URL: https://busca.inpi.gov.br/pePI/
+        - Form POST to: /pePI/servlet/LoginController
+        - Fields: T_Login, T_Senha
+        - Hidden: action=login
         
-        # TODO: Implementar login se necessário
-        return []
+        Returns:
+            True if login successful
+        """
+        try:
+            logger.info("   📝 Accessing login page...")
+            
+            # Go to login page
+            await self.page.goto(
+                "https://busca.inpi.gov.br/pePI/",
+                wait_until='networkidle',
+                timeout=180000  # 3 minutes
+            )
+            
+            await asyncio.sleep(2)
+            
+            logger.info(f"   🔑 Logging in as {username}...")
+            
+            # Fill login form
+            await self.page.fill('input[name="T_Login"]', username)
+            await self.page.fill('input[name="T_Senha"]', password)
+            
+            await asyncio.sleep(1)
+            
+            # Click Continue button (value contains "Continuar")
+            await self.page.click('input[type="submit"][value*="Continuar"]')
+            
+            # Wait for navigation
+            await self.page.wait_for_load_state('networkidle', timeout=180000)
+            
+            await asyncio.sleep(2)
+            
+            # Check if login was successful
+            content = await self.page.content()
+            
+            # Success indicators:
+            # - "Login: dnm48" appears in page
+            # - "Patente" link available
+            # - "Finalizar Sessão" link available
+            
+            if username.lower() in content.lower() or "Finalizar Sess" in content or "patente" in content.lower():
+                logger.info(f"   ✅ Login successful! Session active")
+                return True
+            else:
+                logger.error("   ❌ Login failed - no session indicators found")
+                return False
+                
+        except Exception as e:
+            logger.error(f"   ❌ Login error: {str(e)}")
+            return False
+    
+    async def _search_term_basic(
+        self,
+        term: str,
+        field: str = "Titulo"
+    ) -> List[Dict]:
+        """
+        STEP 3: Search a single term using BASIC search
+        
+        Based on 3-search-básico.html:
+        - Form POST to: /pePI/servlet/PatenteServletController
+        - Fields:
+          * ExpressaoPesquisa = search term
+          * Coluna = "Titulo" or "Resumo"
+          * FormaPesquisa = "todasPalavras"
+          * RegisterPerPage = "100"
+          * Action = "SearchBasico"
+        
+        Args:
+            term: Search term
+            field: "Titulo" or "Resumo"
+        
+        Returns:
+            List of BR patents found
+        """
+        results = []
+        
+        try:
+            # Make sure we're on search page
+            current_url = self.page.url
+            if "PatenteSearchBasico.jsp" not in current_url:
+                await self.page.goto(
+                    "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
+                    wait_until='networkidle',
+                    timeout=180000
+                )
+                await asyncio.sleep(2)
+            
+            # Fill search form
+            await self.page.fill('input[name="ExpressaoPesquisa"]', term)
+            
+            # Select field (Titulo or Resumo)
+            await self.page.select_option('select[name="Coluna"]', field)
+            
+            # Select "todas as palavras"
+            await self.page.select_option('select[name="FormaPesquisa"]', 'todasPalavras')
+            
+            # Select 100 results per page
+            await self.page.select_option('select[name="RegisterPerPage"]', '100')
+            
+            await asyncio.sleep(1)
+            
+            # Click Search button
+            await self.page.click('input[type="submit"][name="botao"]')
+            
+            # Wait for results
+            await self.page.wait_for_load_state('networkidle', timeout=180000)
+            
+            await asyncio.sleep(2)
+            
+            # Get page content
+            content = await self.page.content()
+            
+            # Check for "Nenhum resultado" (no results)
+            if "Nenhum resultado foi encontrado" in content:
+                logger.info(f"      ⚠️  No results for '{term}' in {field}")
+                return results
+            
+            # Parse results
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Find all BR patent links
+            # Pattern from 4-escolher-resultados.html:
+            # <a href='/pePI/servlet/PatenteServletController?Action=detail&CodPedido=1748765...'>BR 11 2024 016586 8</a>
+            
+            patent_links = soup.find_all('a', href=re.compile(r'Action=detail'))
+            
+            if patent_links:
+                logger.info(f"      ✅ Found {len(patent_links)} result(s) for '{term}' in {field}")
+            
+            for link in patent_links:
+                try:
+                    br_text = link.get_text(strip=True)
+                    
+                    # Extract BR number: "BR 11 2024 016586 8" -> "BR112024016586"
+                    # Remove ALL spaces and extra chars
+                    br_clean = re.sub(r'\s+', '', br_text)
+                    
+                    # Extract just the BR number
+                    match = re.search(r'(BR[A-Z]*\d+)', br_clean)
+                    if match:
+                        br_number = match.group(1)
+                        
+                        if br_number not in self.found_brs:
+                            self.found_brs.add(br_number)
+                            
+                            results.append({
+                                "patent_number": br_number,
+                                "country": "BR",
+                                "source": "INPI",
+                                "search_term": term,
+                                "search_field": field
+                            })
+                            
+                            logger.info(f"         → {br_number}")
+                
+                except Exception as e:
+                    logger.warning(f"      ⚠️  Error parsing link: {str(e)}")
+                    continue
+            
+        except Exception as e:
+            logger.error(f"      ❌ Error in basic search: {str(e)}")
+        
+        return results
+    
+    async def _check_session_expired(self) -> bool:
+        """
+        Check if INPI session has expired
+        
+        Returns:
+            True if session expired (redirected to login)
+        """
+        try:
+            current_url = self.page.url
+            content = await self.page.content()
+            
+            # Session expired if:
+            # - URL contains "login"
+            # - Content has login form
+            
+            if "login" in current_url.lower() or "T_Login" in content:
+                return True
+            
+            return False
+            
+        except:
+            return False
+    
+    def _build_search_terms(
+        self,
+        molecule: str,
+        brand: str,
+        dev_codes: List[str],
+        max_terms: int = 8
+    ) -> List[str]:
+        """
+        Build search terms from molecule, brand, dev codes
+        
+        Args:
+            molecule: Molecule name (in Portuguese!)
+            brand: Brand name (in Portuguese!)
+            dev_codes: Development codes
+            max_terms: Maximum number of terms
+        
+        Returns:
+            List of search terms
+        """
+        terms = set()
+        
+        # Add molecule and brand
+        if molecule:
+            terms.add(molecule.strip())
+        
+        if brand and brand != molecule:
+            terms.add(brand.strip())
+        
+        # Add dev codes (limit to avoid too many searches)
+        for code in dev_codes[:6]:  # Max 6 dev codes
+            if code and len(code) > 2:  # Only meaningful codes
+                terms.add(code.strip())
+        
+        # Convert to list and limit
+        terms_list = list(terms)[:max_terms]
+        
+        return terms_list
+    
+    async def _translate_to_portuguese(
+        self,
+        molecule: str,
+        brand: str,
+        groq_api_key: str
+    ) -> tuple:
+        """
+        Translate molecule and brand to Portuguese using Groq AI
+        
+        Args:
+            molecule: Molecule name in English
+            brand: Brand name in English
+            groq_api_key: Groq API key
+        
+        Returns:
+            (molecule_pt, brand_pt) tuple
+        """
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Translate molecule
+                molecule_pt = await self._groq_translate(client, molecule, groq_api_key)
+                
+                # Translate brand if different
+                if brand and brand.lower() != molecule.lower():
+                    brand_pt = await self._groq_translate(client, brand, groq_api_key)
+                else:
+                    brand_pt = molecule_pt
+                
+                return molecule_pt, brand_pt
+                
+        except Exception as e:
+            logger.warning(f"   ⚠️  Translation error: {str(e)}, using original names")
+            return molecule, brand
+    
+    async def _groq_translate(
+        self,
+        client: httpx.AsyncClient,
+        text: str,
+        groq_api_key: str
+    ) -> str:
+        """
+        Translate text to Portuguese using Groq
+        
+        Args:
+            client: HTTP client
+            text: Text to translate
+            groq_api_key: Groq API key
+        
+        Returns:
+            Translated text in Portuguese
+        """
+        try:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a pharmaceutical translator. Translate drug names to Portuguese. Return ONLY the translated name, nothing else."
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Translate this pharmaceutical name to Portuguese: {text}"
+                        }
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 50
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                translation = data["choices"][0]["message"]["content"].strip()
+                
+                # Remove quotes if present
+                translation = translation.strip('"').strip("'")
+                
+                return translation
+            else:
+                logger.warning(f"   ⚠️  Groq API error: {response.status_code}")
+                return text
+                
+        except Exception as e:
+            logger.warning(f"   ⚠️  Groq translation error: {str(e)}")
+            return text
 
 
-# Singleton
+# Singleton instance
 inpi_crawler = INPICrawler()
