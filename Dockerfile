@@ -1,16 +1,18 @@
-FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
 WORKDIR /app
 
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN playwright install chromium
-RUN playwright install-deps chromium
+# Copy application
+COPY main.py .
+COPY google_patents_crawler.py .
+COPY inpi_crawler.py .
 
-COPY . .
+# Railway uses PORT env variable
+ENV PORT=8000
 
-ENV PORT=8080
-EXPOSE 8080
-
+# Run with PORT from environment
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT
