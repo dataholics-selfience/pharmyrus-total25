@@ -1,5 +1,5 @@
 """
-Pharmyrus v28.11 - INPI LAYER 3 FINAL ONLY + PROXIES
+Pharmyrus v28.12 - SKIP FAMILY + INPI WORKING!
 Layer 1: EPO OPS (COMPLETO)
 Layer 2: Google Patents (httpx)  
 Layer 3: INPI Brazilian (APENAS NO FINAL - 1X!)
@@ -56,7 +56,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pharmyrus")
 logger.info("=" * 80)
-logger.info(f"📝 Pharmyrus v28.11 INPI-FINAL - Logs persistentes em /tmp/pharmyrus.log")
+logger.info(f"📝 Pharmyrus v28.12 SKIP-FAMILY - Logs persistentes em /tmp/pharmyrus.log")
 logger.info("=" * 80)
 
 # EPO Credentials (MESMAS QUE FUNCIONAM)
@@ -1123,77 +1123,14 @@ async def search_patents(request: SearchRequest):
         # ===== INPI RUN #3: After EPO Family Lookups (placeholder - will run later) =====
         # Esta execução será feita APÓS family lookups completar
         
-        # Extrair patentes dos países alvo via EPO FAMILY LOOKUPS
-        # LIMITE CRÍTICO: Apenas primeiros 100 WOs para evitar timeout!
-        logger.info("📍 EPO Family Lookups: Processing first 100 WOs (TIMEOUT PROTECTION)")
+        # ===== FAMILY LOOKUPS SKIPPED (CAUSA TIMEOUT) =====
+        # Family lookups está desabilitado para evitar timeout
+        # INPI roda direto após Google para máxima velocidade
+        logger.info("⏭️  SKIPPING Family Lookups (timeout protection)")
+        logger.info("   Going straight to INPI Layer 3!")
         
-        patents_by_country = {cc: [] for cc in target_countries}
-        seen_patents = set()
-        
-        # LIMITE: Apenas 100 WOs para evitar timeout
-        wos_to_process = sorted(all_wos)[:100]
-        logger.info(f"   Limited to {len(wos_to_process)}/{len(all_wos)} WOs for family lookup")
-        
-        for i, wo in enumerate(wos_to_process):
-            if i > 0 and i % 20 == 0:
-                logger.info(f"   Processing WO {i}/{len(wos_to_process)}...")
-            
-            family_patents = await get_family_patents(client, token, wo, target_countries)
-            
-            for country, patents in family_patents.items():
-                for p in patents:
-                    pnum = p["patent_number"]
-                    if pnum not in seen_patents:
-                        seen_patents.add(pnum)
-                        patents_by_country[country].append(p)
-            
-            await asyncio.sleep(0.3)
-        
-        all_patents = []
-        for country, patents in patents_by_country.items():
-            all_patents.extend(patents)
-        
-        # ENRIQUECER BRs com metadata incompleta via endpoint individual
-        logger.info(f"   Enriching BRs with incomplete metadata...")
-        br_patents = [p for p in all_patents if p["country"] == "BR"]
-        incomplete_brs = [
-            p for p in br_patents 
-            if not p.get("title") or not p.get("abstract") or not p.get("applicants") or not p.get("inventors") or not p.get("ipc_codes")
-        ]
-        
-        logger.info(f"   Found {len(incomplete_brs)} BRs with incomplete metadata")
-        
-        for i, patent in enumerate(incomplete_brs):
-            enriched = await enrich_br_metadata(client, token, patent)
-            # Update in-place
-            patent.update(enriched)
-            
-            if (i + 1) % 10 == 0:
-                logger.info(f"   Enriched {i + 1}/{len(incomplete_brs)} BRs...")
-        
-        logger.info(f"   ✅ BR enrichment complete")
-        
-        # FALLBACK: Google Patents para BRs com metadata ainda incompleta
-        logger.info(f"🌐 Google Patents fallback for missing metadata...")
-        still_incomplete = [
-            p for p in br_patents 
-            if not p.get("abstract") or not p.get("applicants") or not p.get("inventors") or not p.get("ipc_codes")
-        ]
-        
-        if still_incomplete:
-            logger.info(f"   Found {len(still_incomplete)} BRs still incomplete after EPO")
-            for i, patent in enumerate(still_incomplete):
-                enriched = await enrich_from_google_patents(client, patent)
-                patent.update(enriched)
-                
-                if (i + 1) % 10 == 0:
-                    logger.info(f"   Google enriched {i + 1}/{len(still_incomplete)} BRs...")
-            
-            logger.info(f"   ✅ Google Patents fallback complete")
-        else:
-            logger.info(f"   ✅ All BRs complete from EPO, skipping Google fallback")
-        
-        logger.info(f"📊 Post-Family Summary: {len(all_wos)} WOs, {len(patents_by_country.get('BR', []))} BRs from EPO")
+        # Inicializar patents_by_country vazio
+        patents_by_country = {"BR": []}
         
         # ===== LAYER 3: INPI BRAZILIAN (FINAL - 1X ONLY!) =====
         logger.info("=" * 100)
@@ -1295,7 +1232,7 @@ async def search_patents(request: SearchRequest):
                 "search_date": datetime.now().isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v28.11 (INPI FINAL + PROXIES)",
+                "version": "Pharmyrus v28.12 (SKIP FAMILY + INPI WORKING)",
                 "sources": ["EPO OPS (FULL)", "Google Patents (AGGRESSIVE)", "INPI Brazilian (DIRECT)"]
             },
             "summary": {

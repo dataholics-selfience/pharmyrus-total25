@@ -127,8 +127,8 @@ class INPICrawler:
             except Exception as e:
                 logger.warning(f"      ❌ Error searching '{term}': {e}")
             
-            # IMPORTANTE: 2 segundos entre chamadas INPI!
-            await asyncio.sleep(2.0)
+            # Proxy rotativo = sem delay necessário!
+            await asyncio.sleep(0.5)  # Apenas 0.5s para rate limiting básico
         
         logger.info(f"🎯 INPI FINAL: Found {len(all_patents)} unique BR patents")
         
