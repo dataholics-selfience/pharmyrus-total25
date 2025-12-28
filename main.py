@@ -1227,7 +1227,6 @@ async def search_patents(request: SearchRequest):
                     patent["expiration_date"] = expiration
                     
                     # Calculate years until expiration
-                    from datetime import datetime
                     exp_dt = datetime.strptime(expiration, "%Y-%m-%d")
                     years_until = (exp_dt - datetime.now()).days / 365.25
                     patent["years_until_expiration"] = round(years_until, 2)
