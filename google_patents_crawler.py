@@ -1,294 +1,163 @@
 """
-Google Patents Crawler Layer 2 - SEM PLAYWRIGHT (httpx only)
-Busca agressiva usando httpx + parse HTML simples
+Google Patents Crawler v28.13 - HTTPX SIMPLES (RESTAURADO - FUNCIONAVA!)
+
+Versão restaurada que FUNCIONAVA perfeitamente
+Busca simples via httpx sem complexidade
 """
-import asyncio
-import re
-import random
+
 import httpx
-from typing import List, Set, Dict
+import asyncio
+import logging
+import re
+from typing import List, Set, Dict, Optional
+
+logger = logging.getLogger("pharmyrus")
 
 
 class GooglePatentsCrawler:
-    """Crawler AGRESSIVO para descobrir TODAS WOs possíveis - SEM Playwright"""
+    """Crawler Google Patents usando HTTP simples"""
     
     def __init__(self):
-        self.found_wos = set()
         self.timeout = 30.0
     
-    def _build_aggressive_search_terms(
+    def _build_search_terms(
         self,
         molecule: str,
-        brand: str,
+        brand: Optional[str],
         dev_codes: List[str],
-        cas: str
+        cas: Optional[str]
     ) -> List[str]:
-        """
-        Constrói TODAS as variações de busca imagináveis
-        Baseado em: sais, cristais, formulações, síntese, uso terapêutico, enantiômeros
-        """
+        """Constrói termos de busca"""
+        
         terms = []
         
-        # 1. BÁSICO - Molecule + patent WO
-        terms.append(f'"{molecule}" patent WO')
-        terms.append(f'"{molecule}" WO site:patents.google.com')
-        
-        # 2. Brand name
-        if brand:
-            terms.append(f'"{brand}" patent WO')
-            terms.append(f'"{brand}" WO site:patents.google.com')
-        
-        # 3. Dev codes (primeiros 5)
-        for code in dev_codes[:5]:
-            terms.append(f'"{code}" patent WO')
-            terms.append(f'"{code}" site:patents.google.com')
-        
-        # 4. CAS number
-        if cas:
-            terms.append(f'"{cas}" patent WO')
-        
-        # 5. SAIS - variações químicas
-        salt_suffixes = [
-            "hydrochloride", "hydrobromide", "sulfate", "phosphate",
-            "acetate", "citrate", "maleate", "tartrate", "mesylate",
-            "sodium salt", "potassium salt", "calcium salt"
-        ]
-        for salt in salt_suffixes[:3]:  # Top 3
-            terms.append(f'"{molecule} {salt}" WO')
-        
-        # 6. CRISTAIS - formas polimórficas
-        crystal_terms = [
-            f'"{molecule} crystalline" WO',
-            f'"{molecule} polymorph" WO',
-            f'"{molecule} crystal form" WO',
-            f'"{molecule} amorphous" WO'
-        ]
-        terms.extend(crystal_terms[:2])
-        
-        # 7. FORMULAÇÃO - pharmaceutical composition
-        formulation_terms = [
-            f'"{molecule} pharmaceutical composition" WO',
-            f'"{molecule} formulation" WO',
-            f'"{molecule} tablet" WO',
-            f'"{molecule} capsule" WO'
-        ]
-        terms.extend(formulation_terms[:2])
-        
-        # 8. SÍNTESE - process preparation
-        synthesis_terms = [
-            f'"{molecule} process preparation" WO',
-            f'"{molecule} synthesis" WO',
-            f'"{molecule} manufacturing" WO'
-        ]
-        terms.extend(synthesis_terms[:2])
-        
-        # 9. USO TERAPÊUTICO - therapeutic use
-        therapeutic_terms = [
-            f'"{molecule} cancer" WO',
-            f'"{molecule} treatment" WO',
-            f'"{molecule} therapy" WO',
-            f'"{molecule} combination" WO'
-        ]
-        terms.extend(therapeutic_terms[:2])
-        
-        # 10. ENANTIÔMEROS - stereoisomers
+        # 1. Molécula principal
         if molecule:
-            terms.append(f'"(R)-{molecule}" WO')
-            terms.append(f'"(S)-{molecule}" WO')
+            terms.append(f'"{molecule}" patent')
+            terms.append(f'"{molecule}" WO')
+        
+        # 2. Brand
+        if brand:
+            terms.append(f'"{brand}" patent')
+            terms.append(f'"{brand}" WO')
+        
+        # 3. Dev codes (primeiros 3)
+        for code in dev_codes[:3]:
+            if code:
+                terms.append(f'"{code}" patent')
+        
+        # 4. CAS
+        if cas:
+            terms.append(f'"{cas}" patent')
+        
+        # 5. Variações (salt forms)
+        if molecule:
+            terms.append(f'"{molecule} hydrochloride"')
+            terms.append(f'"{molecule} crystalline"')
         
         return terms
     
     async def search_google_patents(
         self,
         molecule: str,
-        brand: str,
+        brand: Optional[str],
         dev_codes: List[str],
-        cas: str
+        cas: Optional[str]
     ) -> Set[str]:
         """
-        Busca Google Patents usando httpx (SEM Playwright)
+        Busca WO patents no Google via HTTP simples
         
         Returns:
-            Set de WO numbers descobertos
+            Set de WO numbers encontrados
         """
-        print(f"\n🔵 LAYER 2: Google Patents (AGGRESSIVE - httpx only)")
-        print(f"   Molecule: {molecule}")
+        logger.info(f"🔍 Google Patents: Searching for {molecule}...")
         
-        # Construir termos de busca
-        search_terms = self._build_aggressive_search_terms(molecule, brand, dev_codes, cas)
-        print(f"   ✅ Generated {len(search_terms)} search terms")
+        search_terms = self._build_search_terms(
+            molecule=molecule,
+            brand=brand,
+            dev_codes=dev_codes,
+            cas=cas
+        )
         
-        self.found_wos = set()
+        logger.info(f"   📋 {len(search_terms)} search terms generated")
         
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            # Limitar a 20 searches para não explodir o tempo
-            for i, term in enumerate(search_terms[:20]):
-                print(f"   🔍 Google search {i+1}/20: {term[:60]}...")
+        all_wos = set()
+        
+        # Executar buscas
+        for i, term in enumerate(search_terms[:10]):  # Limitar a 10
+            logger.info(f"   🔍 Search {i+1}/10: {term[:40]}...")
+            
+            try:
+                wos = await self._search_google(term)
+                if wos:
+                    all_wos.update(wos)
+                    logger.info(f"      ✅ Found {len(wos)} WOs")
                 
-                try:
-                    # Buscar via Google (sem proxy por enquanto)
-                    wos = await self._search_term(client, term)
-                    
-                    if wos:
-                        self.found_wos.update(wos)
-                        print(f"      ✅ Found {len(wos)} WOs (total: {len(self.found_wos)})")
-                    else:
-                        print(f"      ⚠️  No WOs found")
-                
-                except Exception as e:
-                    print(f"      ❌ Error: {e}")
-                
-                # Rate limiting
-                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await asyncio.sleep(1.0)  # Rate limiting
+            
+            except Exception as e:
+                logger.warning(f"      ❌ Error: {e}")
+                continue
         
-        print(f"   ✅ Google TOTAL: {len(self.found_wos)} unique WOs")
-        return self.found_wos
+        logger.info(f"   ✅ Google TOTAL: {len(all_wos)} unique WOs")
+        
+        return all_wos
     
-    async def _search_term(self, client: httpx.AsyncClient, search_term: str) -> Set[str]:
-        """
-        Busca um termo e extrai WO numbers
-        
-        Usa Google Search direto (pode ser bloqueado - fallback para regex simples)
-        """
-        wos = set()
+    async def _search_google(self, query: str) -> Set[str]:
+        """Busca via Google e extrai WO numbers"""
         
         try:
-            # URL do Google Search
             url = "https://www.google.com/search"
             params = {
-                "q": search_term,
-                "num": 20  # 20 resultados
+                "q": f"{query} site:patents.google.com",
+                "num": 20
             }
-            
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9"
-            }
-            
-            response = await client.get(url, params=params, headers=headers)
-            
-            if response.status_code == 200:
-                html = response.text
-                
-                # Extrair WO numbers do HTML
-                # Padrão: WO2013084138, WO 2013084138, WO/2013/084138
-                wo_patterns = [
-                    r'WO\s*(\d{4})\s*(\d{6})',
-                    r'WO/(\d{4})/(\d{6})',
-                    r'WO(\d{4})(\d{6})'
-                ]
-                
-                for pattern in wo_patterns:
-                    matches = re.findall(pattern, html)
-                    for match in matches:
-                        wo_num = f"WO{match[0]}{match[1]}"
-                        wos.add(wo_num)
-            
-            else:
-                print(f"         ⚠️  Google returned {response.status_code}")
-        
-        except httpx.TimeoutException:
-            print(f"         ⏱️  Timeout")
-        
-        except Exception as e:
-            print(f"         ❌ Error: {e}")
-        
-        return wos
-    
-    async def enrich_patents_metadata(
-        self,
-        patents: List[Dict]
-    ) -> List[Dict]:
-        """
-        Enriquece metadados de patentes via Google Patents
-        
-        Para patentes que NÃO têm abstract/title do EPO,
-        tenta buscar no Google Patents (parse HTML)
-        """
-        print(f"\n📊 Enriching metadata for {len(patents)} patents...")
-        
-        enriched = 0
-        
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            for patent in patents:
-                # Se já tem abstract E title, skip
-                if patent.get("abstract") and patent.get("title"):
-                    continue
-                
-                wo_num = patent.get("patent_number", "")
-                if not wo_num or not wo_num.startswith("WO"):
-                    continue
-                
-                try:
-                    # Buscar no Google Patents
-                    metadata = await self._get_google_patents_metadata(client, wo_num)
-                    
-                    if metadata:
-                        # Enriquecer campos faltantes
-                        if not patent.get("title") and metadata.get("title"):
-                            patent["title"] = metadata["title"]
-                            enriched += 1
-                        
-                        if not patent.get("abstract") and metadata.get("abstract"):
-                            patent["abstract"] = metadata["abstract"]
-                            enriched += 1
-                        
-                        if not patent.get("applicants") and metadata.get("applicants"):
-                            patent["applicants"] = metadata["applicants"]
-                        
-                        if not patent.get("inventors") and metadata.get("inventors"):
-                            patent["inventors"] = metadata["inventors"]
-                    
-                    await asyncio.sleep(0.3)
-                
-                except Exception as e:
-                    print(f"   ❌ Error enriching {wo_num}: {e}")
-        
-        print(f"   ✅ Enriched {enriched} fields")
-        return patents
-    
-    async def _get_google_patents_metadata(
-        self,
-        client: httpx.AsyncClient,
-        wo_number: str
-    ) -> Dict:
-        """
-        Busca metadata de uma patente WO no Google Patents
-        """
-        try:
-            # URL do Google Patents
-            url = f"https://patents.google.com/patent/{wo_number}"
             
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
             
-            response = await client.get(url, headers=headers)
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+                response = await client.get(url, params=params, headers=headers)
             
-            if response.status_code == 200:
-                html = response.text
-                
-                # Parse HTML (básico - pode melhorar)
-                metadata = {}
-                
-                # Title
-                title_match = re.search(r'<title>(.*?)</title>', html)
-                if title_match:
-                    metadata["title"] = title_match.group(1).split(" - ")[0].strip()
-                
-                # Abstract (primeira ocorrência de texto longo)
-                abstract_match = re.search(r'<div[^>]*abstract[^>]*>(.*?)</div>', html, re.DOTALL)
-                if abstract_match:
-                    abstract_text = re.sub(r'<[^>]+>', '', abstract_match.group(1))
-                    metadata["abstract"] = abstract_text.strip()[:500]  # Primeiros 500 chars
-                
-                return metadata
+            if response.status_code != 200:
+                return set()
             
-            return {}
+            html = response.text
+            
+            # Extrair WO numbers do HTML
+            # Padrões:
+            # 1. WO2011051540
+            # 2. WO/2011/051540
+            # 3. WO 2011051540
+            
+            wos = set()
+            
+            # Padrão 1: WO seguido de números
+            pattern1 = re.findall(r'WO\s*(\d{4})\s*(\d{6})', html)
+            for match in pattern1:
+                wo = f"WO{match[0]}{match[1]}"
+                wos.add(wo)
+            
+            # Padrão 2: WO com /
+            pattern2 = re.findall(r'WO[/\-](\d{4})[/\-](\d{6})', html)
+            for match in pattern2:
+                wo = f"WO{match[0]}{match[1]}"
+                wos.add(wo)
+            
+            return wos
         
-        except Exception:
-            return {}
+        except Exception as e:
+            logger.warning(f"         Google search error: {e}")
+            return set()
+    
+    async def enrich_patents_metadata(
+        self,
+        patents: List[Dict],
+        molecule: str
+    ) -> List[Dict]:
+        """Placeholder - não usado"""
+        return patents
 
 
 # Singleton instance

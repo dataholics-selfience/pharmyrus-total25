@@ -131,6 +131,14 @@ class INPICrawler:
             await asyncio.sleep(0.5)  # Apenas 0.5s para rate limiting básico
         
         logger.info(f"🎯 INPI FINAL: Found {len(all_patents)} unique BR patents")
+        logger.info(f"   📊 Searches completed: {min(len(search_terms), 15)}/15")
+        logger.info(f"   📊 BRs discovered: {len(all_patents)}")
+        
+        # Log individual BRs
+        if all_patents:
+            logger.info(f"   📋 BR patents found:")
+            for patent in all_patents[:10]:  # Primeiros 10
+                logger.info(f"      - {patent['patent_number']}: {patent.get('title', '')[:50]}...")
         
         return all_patents
     

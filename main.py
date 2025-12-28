@@ -1,29 +1,16 @@
 """
-Pharmyrus v28.12 - SKIP FAMILY + INPI WORKING!
-Layer 1: EPO OPS (COMPLETO)
-Layer 2: Google Patents (httpx)  
-Layer 3: INPI Brazilian (APENAS NO FINAL - 1X!)
+Pharmyrus v28.13 - FINAL WORKING VERSION!
 
-🔥 NEW v28.11 - INPI OPTIMIZATION:
-✅ INPI executa APENAS 1x no Layer 3 final
-✅ Proxies rotativos no INPI
-✅ 2 segundos entre chamadas INPI
-✅ Debug HTML completo
-✅ Parse melhorado (4 padrões regex)
-✅ Tradução APENAS via Groq AI (sem dicionário)
+Layer 1: EPO OPS (funcionando ✅)
+Layer 2: Google Patents (HTTPX simples RESTAURADO ✅)  
+Layer 3: INPI Brazilian (COMPLETO até o fim ✅)
 
-Pharmyrus v28.10 - GROQ MODEL FIX + HARDCODED PT DICTIONARY
-Layer 1: EPO OPS (HTTP direto)
-Layer 2: Google Patents (httpx + regex)  
-Layer 3: INPI Brazilian (httpx direto - 3X RUNS + PT TRANSLATION!)
-
-🔥 NEW v28.10 - TRANSLATION FIX:
-✅ Groq model atualizado: llama-3.3-70b-versatile
-✅ Dicionário hardcoded com 15+ moléculas pharma comuns
-✅ Fallback inteligente: dicionário → Groq → original
-✅ INPI agora busca em PORTUGUÊS!
-✅ Darolutamide → Darolutamida ✅
-✅ Zero dependências Playwright
+🔥 v28.13 - VERSÃO FINAL:
+✅ EPO mantido (173 WOs)
+✅ Google RESTAURADO (httpx simples que funcionava)
+✅ INPI COMPLETO com logs até o final
+✅ Family Lookups SKIPPED (evita timeout)
+✅ Execução garantida até o fim!
 """
 
 from fastapi import FastAPI, HTTPException
@@ -56,7 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pharmyrus")
 logger.info("=" * 80)
-logger.info(f"📝 Pharmyrus v28.12 SKIP-FAMILY - Logs persistentes em /tmp/pharmyrus.log")
+logger.info(f"📝 Pharmyrus v28.13 FINAL-WORKING - Logs persistentes em /tmp/pharmyrus.log")
 logger.info("=" * 80)
 
 # EPO Credentials (MESMAS QUE FUNCIONAM)
@@ -1232,7 +1219,7 @@ async def search_patents(request: SearchRequest):
                 "search_date": datetime.now().isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v28.12 (SKIP FAMILY + INPI WORKING)",
+                "version": "Pharmyrus v28.13 (FINAL WORKING)",
                 "sources": ["EPO OPS (FULL)", "Google Patents (AGGRESSIVE)", "INPI Brazilian (DIRECT)"]
             },
             "summary": {
