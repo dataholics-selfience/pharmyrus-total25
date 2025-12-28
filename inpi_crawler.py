@@ -400,122 +400,335 @@ class INPICrawler:
     
     async def _parse_patent_details(self, br_number: str) -> Dict:
         """
-        Parse complete patent details from INPI detail page
-        Extracts ALL fields: title, abstract, applicants, inventors, attorney, IPC, PCT, WO, documents, etc
+        Parse COMPLETE patent details from INPI detail page
+        Extracts ALL 18+ fields based on real INPI HTML structure
+        
+        Fields extracted:
+        - (21) Patent Number
+        - (22) Filing Date  
+        - (43) Publication Date
+        - (47) Grant Date
+        - (30) Priority Data (multiple)
+        - (51) IPC Codes
+        - (54) Title
+        - (57) Abstract
+        - (71) Applicants
+        - (72) Inventors
+        - (74) Attorney
+        - (85) National Phase Date
+        - (86) PCT Number & Date
+        - (87) WO Number & Date
+        - Anuidades (fee schedule)
+        - Despachos (RPI publications)
+        - Documents & PDF links
         """
         try:
             content = await self.page.content()
             soup = BeautifulSoup(content, 'html.parser')
-            details = {}
             
-            # (54) Title
-            title_tag = soup.find('font', class_='alerta', string='(54)')
-            if title_tag:
-                title_text = title_tag.find_parent('tr').get_text(strip=True)
-                details['title'] = title_text.replace('(54)', '').replace('Título:', '').strip()
+            details = {
+                'patent_number': br_number,
+                'country': 'BR',
+                'title': None,
+                'title_original': None,
+                'abstract': None,
+                'applicants': [],
+                'inventors': [],
+                'ipc_codes': [],
+                'publication_date': None,
+                'filing_date': None,
+                'grant_date': None,
+                'priority_data': [],
+                'pct_number': None,
+                'pct_date': None,
+                'wo_number': None,
+                'wo_date': None,
+                'national_phase_date': None,
+                'attorney': None,
+                'anuidades': [],
+                'despachos': [],
+                'documents': [],
+                'pdf_links': [],
+                'link_national': self.page.url
+            }
             
-            # (57) Abstract
-            abstract_tag = soup.find('font', class_='alerta', string='(57)')
-            if abstract_tag:
-                abstract_text = abstract_tag.find_parent('tr').get_text(strip=True)
-                details['abstract'] = abstract_text.replace('(57)', '').replace('Resumo:', '').strip()
+            # Helper function to parse BR dates DD/MM/YYYY → YYYY-MM-DD
+            def parse_br_date(date_str):
+                if not date_str or date_str.strip() in ['-', '']:
+                    return None
+                match = re.search(r'(\d{2})/(\d{2})/(\d{4})', date_str)
+                if match:
+                    day, month, year = match.groups()
+                    return f"{year}-{month}-{day}"
+                return None
             
-            # (71) Applicants
-            applicant_tag = soup.find('font', class_='alerta', string='(71)')
-            if applicant_tag:
-                applicant_text = applicant_tag.find_parent('tr').get_text(strip=True)
-                applicant_text = applicant_text.replace('(71)', '').replace('Nome do Depositante:', '').strip()
-                details['applicants'] = [applicant_text] if applicant_text else []
+            # (22) Filing Date - Data do Depósito
+            filing_tag = soup.find('font', class_='normal', string=re.compile(r'Data do Depósito:'))
+            if filing_tag:
+                tr = filing_tag.find_parent('tr')
+                if tr:
+                    tds = tr.find_all('td')
+                    if len(tds) >= 2:
+                        date_text = tds[1].get_text(strip=True)
+                        details['filing_date'] = parse_br_date(date_text)
             
-            # (72) Inventors
-            inventor_tag = soup.find('font', class_='alerta', string='(72)')
-            if inventor_tag:
-                inventor_text = inventor_tag.find_parent('tr').get_text(strip=True)
-                inventor_text = inventor_text.replace('(72)', '').replace('Nome do Inventor:', '').strip()
-                details['inventors'] = [inv.strip() for inv in inventor_text.split('/') if inv.strip()]
+            # (43) Publication Date - Data da Publicação
+            pub_tag = soup.find('font', class_='normal', string=re.compile(r'Data da Publicação:'))
+            if pub_tag:
+                tr = pub_tag.find_parent('tr')
+                if tr:
+                    tds = tr.find_all('td')
+                    if len(tds) >= 2:
+                        date_text = tds[1].get_text(strip=True)
+                        details['publication_date'] = parse_br_date(date_text)
             
-            # (74) Attorney
-            attorney_tag = soup.find('font', class_='alerta', string='(74)')
-            if attorney_tag:
-                attorney_text = attorney_tag.find_parent('tr').get_text(strip=True)
-                details['attorney'] = attorney_text.replace('(74)', '').replace('Nome do Procurador:', '').strip()
+            # (47) Grant Date - Data da Concessão
+            grant_tag = soup.find('font', class_='normal', string=re.compile(r'Data da Concessão:'))
+            if grant_tag:
+                tr = grant_tag.find_parent('tr')
+                if tr:
+                    tds = tr.find_all('td')
+                    if len(tds) >= 2:
+                        date_text = tds[1].get_text(strip=True)
+                        if date_text and date_text != '-':
+                            details['grant_date'] = parse_br_date(date_text)
             
-            # (85) National Phase Date
-            phase_tag = soup.find('font', class_='alerta', string='(85)')
-            if phase_tag:
-                phase_text = phase_tag.find_parent('tr').get_text(strip=True)
-                details['national_phase_date'] = phase_text.replace('(85)', '').replace('Início da Fase Nacional:', '').strip()
+            # (30) Priority Data - Find priority table
+            priority_section = soup.find('font', class_='alerta', string=re.compile(r'\(30\)'))
+            if priority_section:
+                # Find next table after (30)
+                current = priority_section
+                for _ in range(10):  # Search up to 10 siblings
+                    current = current.find_next_sibling()
+                    if current and current.name == 'table':
+                        rows = current.find_all('tr')[1:]  # Skip header
+                        for row in rows:
+                            cols = row.find_all('td')
+                            if len(cols) >= 3:
+                                country = cols[0].get_text(strip=True)
+                                number = cols[1].get_text(strip=True)
+                                date = cols[2].get_text(strip=True)
+                                if country and number:
+                                    details['priority_data'].append({
+                                        'country': country,
+                                        'number': number,
+                                        'date': parse_br_date(date)
+                                    })
+                        break
             
-            # (86) PCT
-            pct_tag = soup.find('font', class_='alerta', string='(86)')
-            if pct_tag:
-                pct_text = pct_tag.find_parent('tr').get_text(strip=True)
-                pct_text = pct_text.replace('(86)', '').replace('PCT', '').strip()
-                if 'Número:' in pct_text:
-                    parts = pct_text.split('Data:')
-                    if len(parts) == 2:
-                        details['pct_number'] = parts[0].replace('Número:', '').strip()
-                        details['pct_date'] = parts[1].strip()
-            
-            # (87) WO
-            wo_tag = soup.find('font', class_='alerta', string='(87)')
-            if wo_tag:
-                wo_text = wo_tag.find_parent('tr').get_text(strip=True)
-                wo_text = wo_text.replace('(87)', '').replace('W.O.', '').strip()
-                if 'Número:' in wo_text:
-                    parts = wo_text.split('Data:')
-                    if len(parts) == 2:
-                        details['wo_number'] = parts[0].replace('Número:', '').strip()
-                        details['wo_date'] = parts[1].strip()
-            
-            # (51) IPC Codes
-            ipc_tag = soup.find('font', class_='alerta', string='(51)')
+            # (51) IPC Classification
+            ipc_tag = soup.find('font', class_='alerta', string=re.compile(r'\(51\)'))
             if ipc_tag:
-                parent = ipc_tag.find_parent('tr')
-                ipc_links = parent.find_all('a', class_='normal')
-                details['ipc_codes'] = [link.get_text(strip=True).replace(';', '').strip() for link in ipc_links if link.get_text(strip=True)]
+                tr = ipc_tag.find_parent('tr')
+                if tr:
+                    # Get all text and split by semicolon/newline
+                    ipc_text = tr.get_text()
+                    for code in re.split(r'[;\n]', ipc_text):
+                        code = code.strip()
+                        # Filter out non-IPC text
+                        if code and not code.startswith('(') and not 'Classificação' in code:
+                            # Match IPC pattern: letter + numbers
+                            if re.match(r'[A-H]\d', code):
+                                details['ipc_codes'].append(code)
             
-            # Documents (PDFs, images)
-            details['documents'] = []
+            # (54) Title - Título
+            title_tag = soup.find('font', class_='alerta', string=re.compile(r'\(54\)'))
+            if title_tag:
+                tr = title_tag.find_parent('tr')
+                if tr:
+                    # Try div first (modern INPI)
+                    title_div = tr.find('div', id='tituloContext')
+                    if title_div:
+                        title_text = title_div.get_text(strip=True)
+                    else:
+                        # Fallback: next td after (54)
+                        tds = tr.find_all('td')
+                        if len(tds) >= 2:
+                            title_text = tds[1].get_text(strip=True)
+                        else:
+                            title_text = tr.get_text(strip=True).replace('(54)', '').replace('Título:', '').strip()
+                    
+                    if title_text:
+                        details['title'] = title_text
+                        details['title_original'] = title_text
+            
+            # (57) Abstract - Resumo
+            abstract_tag = soup.find('font', class_='alerta', string=re.compile(r'\(57\)'))
+            if abstract_tag:
+                tr = abstract_tag.find_parent('tr')
+                if tr:
+                    # Try div first (modern INPI)
+                    abstract_div = tr.find('div', id='resumoContext')
+                    if abstract_div:
+                        abstract_text = abstract_div.get_text(strip=True)
+                    else:
+                        # Fallback: next td after (57)
+                        tds = tr.find_all('td')
+                        if len(tds) >= 2:
+                            abstract_text = tds[1].get_text(strip=True)
+                        else:
+                            abstract_text = tr.get_text(strip=True).replace('(57)', '').replace('Resumo:', '').strip()
+                    
+                    if abstract_text:
+                        details['abstract'] = abstract_text
+            
+            # (71) Applicants - Nome do Depositante
+            applicant_tag = soup.find('font', class_='alerta', string=re.compile(r'\(71\)'))
+            if applicant_tag:
+                tr = applicant_tag.find_parent('tr')
+                if tr:
+                    applicant_text = tr.get_text(strip=True)
+                    applicant_text = applicant_text.replace('(71)', '').replace('Nome do Depositante:', '').strip()
+                    # Split by / for multiple applicants
+                    if applicant_text:
+                        details['applicants'] = [a.strip() for a in applicant_text.split('/') if a.strip()]
+            
+            # (72) Inventors - Nome do Inventor
+            inventor_tag = soup.find('font', class_='alerta', string=re.compile(r'\(72\)'))
+            if inventor_tag:
+                tr = inventor_tag.find_parent('tr')
+                if tr:
+                    inventor_text = tr.get_text(strip=True)
+                    inventor_text = inventor_text.replace('(72)', '').replace('Nome do Inventor:', '').strip()
+                    # Split by / for multiple inventors
+                    if inventor_text:
+                        details['inventors'] = [i.strip() for i in inventor_text.split('/') if i.strip()]
+            
+            # (74) Attorney - Nome do Procurador
+            attorney_tag = soup.find('font', class_='alerta', string=re.compile(r'\(74\)'))
+            if attorney_tag:
+                tr = attorney_tag.find_parent('tr')
+                if tr:
+                    attorney_text = tr.get_text(strip=True)
+                    details['attorney'] = attorney_text.replace('(74)', '').replace('Nome do Procurador:', '').strip()
+            
+            # (85) National Phase Entry Date
+            phase_tag = soup.find('font', class_='alerta', string=re.compile(r'\(85\)'))
+            if phase_tag:
+                tr = phase_tag.find_parent('tr')
+                if tr:
+                    phase_text = tr.get_text(strip=True)
+                    date_match = re.search(r'(\d{2}/\d{2}/\d{4})', phase_text)
+                    if date_match:
+                        details['national_phase_date'] = parse_br_date(date_match.group(1))
+            
+            # (86) PCT Number and Date
+            pct_tag = soup.find('font', class_='alerta', string=re.compile(r'\(86\)'))
+            if pct_tag:
+                tr = pct_tag.find_parent('tr')
+                if tr:
+                    pct_text = tr.get_text(strip=True)
+                    # Extract PCT number (e.g., EP2023054766)
+                    pct_match = re.search(r'([A-Z]{2}\d{10,})', pct_text)
+                    if pct_match:
+                        details['pct_number'] = pct_match.group(1)
+                    # Extract date
+                    date_match = re.search(r'Data[:\s]*(\d{2}/\d{2}/\d{4})', pct_text)
+                    if date_match:
+                        details['pct_date'] = parse_br_date(date_match.group(1))
+            
+            # (87) WO Number and Date
+            wo_tag = soup.find('font', class_='alerta', string=re.compile(r'\(87\)'))
+            if wo_tag:
+                tr = wo_tag.find_parent('tr')
+                if tr:
+                    wo_text = tr.get_text(strip=True)
+                    # Extract WO number (e.g., 2023/161458)
+                    wo_match = re.search(r'(\d{4})/(\d{6})', wo_text)
+                    if wo_match:
+                        details['wo_number'] = f"WO{wo_match.group(1)}{wo_match.group(2)}"
+                    # Extract date
+                    date_match = re.search(r'Data[:\s]*(\d{2}/\d{2}/\d{4})', wo_text)
+                    if date_match:
+                        details['wo_date'] = parse_br_date(date_match.group(1))
+            
+            # Anuidades (Fee Schedule) - Find table with "Ordinário" and "Extraordinário"
             for table in soup.find_all('table'):
-                header = table.find('th')
-                if header and 'Documentos' in header.get_text():
-                    rows = table.find_all('tr')[1:]
-                    for row in rows:
-                        cols = row.find_all('td')
-                        if len(cols) >= 2:
-                            link = cols[1].find('a')
-                            if link:
-                                doc_url = link.get('href', '')
-                                details['documents'].append({
-                                    "type": cols[0].get_text(strip=True),
-                                    "url": f"https://busca.inpi.gov.br{doc_url}" if doc_url.startswith('/') else doc_url,
-                                    "title": link.get_text(strip=True)
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) >= 2:
+                        fee_type = cells[0].get_text(strip=True)
+                        if fee_type in ['Ordinário', 'Extraordinário']:
+                            # Get date range from next cells
+                            dates = []
+                            for cell in cells[1:]:
+                                date_text = cell.get_text(strip=True)
+                                if date_text and '/' in date_text:
+                                    dates.append(date_text)
+                            if dates:
+                                details['anuidades'].append({
+                                    'type': fee_type,
+                                    'dates': ' - '.join(dates)
                                 })
             
-            # Despachos (official communications)
-            details['despachos'] = []
-            for table in soup.find_all('table'):
-                header = table.find('th')
-                if header and 'Despachos' in header.get_text():
-                    rows = table.find_all('tr')[1:]
-                    for row in rows:
-                        cols = row.find_all('td')
-                        if len(cols) >= 3:
-                            details['despachos'].append({
-                                "date": cols[0].get_text(strip=True),
-                                "code": cols[1].get_text(strip=True),
-                                "description": cols[2].get_text(strip=True)
-                            })
+            # Despachos (Publications in RPI) - Find table with RPI numbers
+            pub_table = soup.find('div', id='accordionPublicacoes')
+            if pub_table:
+                rows = pub_table.find_all('tr', class_='normal')
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) >= 3:
+                        rpi = cells[0].get_text(strip=True)
+                        rpi_date = cells[1].get_text(strip=True)
+                        despacho_code = cells[2].get_text(strip=True)
+                        
+                        # Check for PDF link
+                        pdf_link = None
+                        if len(cells) > 3:
+                            img = cells[3].find('img')
+                            if img:
+                                pdf_link = f"https://busca.inpi.gov.br/pePI/servlet/PatenteServletController?Action=detail&CodPedido={br_number}&RPI={rpi}"
+                        
+                        details['despachos'].append({
+                            'rpi': rpi,
+                            'rpi_date': parse_br_date(rpi_date),
+                            'despacho_code': despacho_code,
+                            'pdf_link': pdf_link
+                        })
             
-            details['link_national'] = self.page.url
+            # PDF Links from Document Section
+            doc_section = soup.find('div', class_='scroll-content')
+            if doc_section:
+                images = doc_section.find_all('img')
+                for img in images:
+                    img_id = img.get('id', '')
+                    label = img.find_next('label')
+                    if label:
+                        rpi_text = label.get_text(strip=True)
+                        pdf_url = f"https://busca.inpi.gov.br/pePI/servlet/PatenteServletController?Action=detail&CodPedido={br_number}"
+                        details['pdf_links'].append({
+                            'rpi': rpi_text,
+                            'document_id': img_id,
+                            'pdf_url': pdf_url
+                        })
             
-            logger.info(f"         ✅ Parsed {len(details)} fields for {br_number}")
+            # Count extracted fields
+            fields_count = sum([
+                1 if details['title'] else 0,
+                1 if details['abstract'] else 0,
+                1 if details['filing_date'] else 0,
+                1 if details['publication_date'] else 0,
+                1 if details['applicants'] else 0,
+                1 if details['inventors'] else 0,
+                1 if details['ipc_codes'] else 0,
+                1 if details['priority_data'] else 0,
+                1 if details['pct_number'] else 0,
+                1 if details['wo_number'] else 0,
+                1 if details['attorney'] else 0,
+                1 if details['anuidades'] else 0,
+                1 if details['despachos'] else 0,
+                1 if details['pdf_links'] else 0,
+            ])
+            
+            logger.info(f"         ✅ Extracted {fields_count} fields for {br_number}")
             return details
             
         except Exception as e:
             logger.error(f"         ❌ Error parsing details for {br_number}: {e}")
-            return {}
+            import traceback
+            traceback.print_exc()
+            return {'patent_number': br_number, 'country': 'BR'}
     
     async def search_by_numbers(self, br_numbers: List[str], username: str = "dnm48", password: str = "coresxxx") -> List[Dict]:
         """
