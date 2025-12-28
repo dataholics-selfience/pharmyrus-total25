@@ -61,6 +61,41 @@ def format_date(date_str: str) -> str:
     except:
         return date_str
 
+
+def group_patent_families(wo_patents: List[Dict], country_patents: Dict[str, List[Dict]]) -> List[Dict]:
+    """
+    Agrupa WOs com suas patentes nacionais (famílias)
+    
+    Args:
+        wo_patents: Lista de WOs
+        country_patents: Dict de {country: [patents]}
+    
+    Returns:
+        Lista de famílias {wo_number, wo_data, national_patents: {BR: [], US: []}}
+    """
+    families = []
+    
+    for wo in wo_patents:
+        wo_num = wo.get("wo_number", "")
+        
+        family = {
+            "wo_number": wo_num,
+            "wo_data": wo,
+            "national_patents": {}
+        }
+        
+        # Agrupar patentes nacionais que pertencem a este WO
+        for country, patents in country_patents.items():
+            family["national_patents"][country] = [
+                p for p in patents 
+                if p.get("wo_primary") == wo_num or wo_num in p.get("wo_numbers", [])
+            ]
+        
+        families.append(family)
+    
+    return families
+
+
 # Country codes supported
 COUNTRY_CODES = {
     "BR": "Brazil", "US": "United States", "EP": "European Patent",
@@ -70,9 +105,9 @@ COUNTRY_CODES = {
 }
 
 app = FastAPI(
-    title="Pharmyrus v29.1-COMPLETE",
-    description="3-Layer Patent Search: EPO OPS + Google Patents (Playwright) + INPI (Complete Parse + Intelligent Merge)",
-    version="29.1-COMPLETE"
+    title="Pharmyrus v30.1-FINAL",
+    description="3-Layer Patent Search: EPO OPS + Google Patents (Playwright) + INPI (Complete 18-field Parse + Intelligent Merge + Patent Families)",
+    version="30.1-FINAL"
 )
 
 app.add_middleware(
@@ -1066,9 +1101,9 @@ async def search_patents(request: SearchRequest):
         
         if br_numbers and groq_key:
             try:
-                logger.info(f"   Enriching up to 30 BRs with complete INPI data...")
+                logger.info(f"   Enriching ALL {len(br_numbers)} BRs with complete INPI data...")
                 inpi_enriched = await inpi_crawler.search_by_numbers(
-                    br_numbers[:30],
+                    br_numbers,  # TODOS, sem limite!
                     username="dnm48",
                     password=INPI_PASSWORD
                 )
@@ -1182,12 +1217,50 @@ async def search_patents(request: SearchRequest):
         logger.info("📊 Calculating Patent Cliff...")
         patent_cliff = calculate_patent_cliff(all_patents)
         
+        # ADICIONAR expiration_date e status em CADA patente
+        for patent in all_patents:
+            filing_date = patent.get("filing_date")
+            if filing_date:
+                from patent_cliff import calculate_patent_expiration
+                expiration = calculate_patent_expiration(filing_date, patent.get("country", "BR"))
+                if expiration:
+                    patent["expiration_date"] = expiration
+                    
+                    # Calculate years until expiration
+                    from datetime import datetime
+                    exp_dt = datetime.strptime(expiration, "%Y-%m-%d")
+                    years_until = (exp_dt - datetime.now()).days / 365.25
+                    patent["years_until_expiration"] = round(years_until, 2)
+                    
+                    # Status
+                    if exp_dt < datetime.now():
+                        patent["patent_status"] = "Expired"
+                    elif years_until < 2:
+                        patent["patent_status"] = "Critical (<2 years)"
+                    elif years_until < 5:
+                        patent["patent_status"] = "Warning (<5 years)"
+                    else:
+                        patent["patent_status"] = "Safe (>5 years)"
+        
         # Separate by source
         patents_by_source = {
             "EPO": [p for p in all_patents if "EPO" in p.get("sources", [p.get("source", "")])],
             "INPI": [p for p in all_patents if "INPI" in p.get("sources", [p.get("source", "")])],
             "Google Patents": [p for p in all_patents if "Google" in str(p.get("sources", [p.get("source", "")]))]
         }
+        
+        # CRIAR FAMÍLIAS DE PATENTES (WO → Patentes Nacionais)
+        logger.info("👨‍👩‍👧‍👦 Grouping patent families...")
+        wo_list = [
+            {
+                "wo_number": wo,
+                "link_espacenet": f"https://worldwide.espacenet.com/patent/search?q=pn%3D{wo}",
+                "link_google_patents": f"https://patents.google.com/patent/{wo}",
+                "source": "EPO" if wo in epo_wos else "Google Patents"
+            }
+            for wo in sorted(list(all_wos))
+        ]
+        patent_families = group_patent_families(wo_list, patents_by_country)
         
         return {
             "metadata": {
@@ -1198,7 +1271,7 @@ async def search_patents(request: SearchRequest):
                 "cache_expiry_date": (datetime.now() + timedelta(days=180)).isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v29.1-COMPLETE",
+                "version": "Pharmyrus v30.1-FINAL",
                 "sources_used": {
                     "epo_ops": True,
                     "google_patents": True,
@@ -1231,6 +1304,8 @@ async def search_patents(request: SearchRequest):
                 },
                 
                 "patent_cliff": patent_cliff,
+                
+                "patent_families": patent_families,  # ✅ NOVO: WO → National Patents
                 
                 "wo_patents": [
                     {

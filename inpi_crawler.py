@@ -85,8 +85,8 @@ class INPICrawler:
         if brand:
             logger.info(f"      Brand: {brand} → {brand_pt}")
         
-        # Build search terms (limit to avoid overload)
-        search_terms = self._build_search_terms(molecule_pt, brand_pt, dev_codes, max_terms=8)
+        # Build search terms (INCLUINDO brand_pt!)
+        search_terms = self._build_search_terms(molecule_pt, brand_pt, dev_codes, max_terms=10)
         
         logger.info(f"   📋 {len(search_terms)} search terms generated")
         logger.info(f"   🔐 Starting INPI search with LOGIN ({username})...")
