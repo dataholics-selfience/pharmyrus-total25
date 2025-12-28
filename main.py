@@ -1217,7 +1217,7 @@ async def search_patents(request: SearchRequest):
         logger.info("=" * 100)
         logger.info(f"   ✅ INPI found: {len(inpi_results)} BR patents")
         
-        all_inpi_results = inpi_results}")
+        all_inpi_results = inpi_results
         logger.info("=" * 100)
         logger.info("")
         
