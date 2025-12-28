@@ -1102,15 +1102,14 @@ async def search_patents(request: SearchRequest):
         # ===== LAYER 2: GOOGLE PATENTS (AGRESSIVO) =====
         logger.info("🟢 LAYER 2: Google Patents (AGGRESSIVE)")
         
-        google_wos = await google_crawler.enrich_with_google(
+        google_wos = await google_crawler.search_google_patents(
             molecule=molecule,
             brand=brand,
             dev_codes=pubchem["dev_codes"],
-            cas=pubchem["cas"],
-            epo_wos=epo_wos
+            cas=pubchem["cas"]
         )
         
-        logger.info(f"   ✅ Google found: {len(google_wos)} NEW WOs")
+        logger.info(f"   ✅ Google found: {len(google_wos)} NEW WOs (total: {len(google_wos)})")
         
         # Merge WOs
         all_wos = epo_wos | google_wos
