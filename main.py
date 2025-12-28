@@ -28,7 +28,7 @@ import base64
 import asyncio
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 # Import Google Crawler Layer 2
@@ -39,6 +39,9 @@ from inpi_crawler import inpi_crawler
 
 # Import Merge Logic
 from merge_logic import merge_br_patents
+
+# Import Patent Cliff Calculator
+from patent_cliff import calculate_patent_cliff
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -603,9 +606,13 @@ async def get_family_patents(client: httpx.AsyncClient, token: str, wo_number: s
                         "filing_date": format_date(filing_date),
                         "priority_date": format_date(priority_date) if priority_date else None,
                         "kind": kind,
+                        "source": "EPO",
+                        "sources": ["EPO"],
                         "link_espacenet": f"https://worldwide.espacenet.com/patent/search?q=pn%3D{patent_num}",
+                        "link_google_patents": f"https://patents.google.com/patent/{patent_num}",
                         "link_national": f"https://busca.inpi.gov.br/pePI/servlet/PatenteServletController?Action=detail&CodPedido={patent_num}" if country == "BR" else None,
-                        "country_name": COUNTRY_CODES.get(country, country)
+                        "country_name": COUNTRY_CODES.get(country, country),
+                        "country_code": country
                     }
                     
                     patents[country].append(patent_data)
@@ -1171,29 +1178,110 @@ async def search_patents(request: SearchRequest):
         
         elapsed = (datetime.now() - start_time).total_seconds()
         
+        # Calculate Patent Cliff
+        logger.info("📊 Calculating Patent Cliff...")
+        patent_cliff = calculate_patent_cliff(all_patents)
+        
+        # Separate by source
+        patents_by_source = {
+            "EPO": [p for p in all_patents if "EPO" in p.get("sources", [p.get("source", "")])],
+            "INPI": [p for p in all_patents if "INPI" in p.get("sources", [p.get("source", "")])],
+            "Google Patents": [p for p in all_patents if "Google" in str(p.get("sources", [p.get("source", "")]))]
+        }
+        
         return {
             "metadata": {
-                "molecule": molecule,
+                "search_id": f"{molecule}_{int(datetime.now().timestamp())}",
+                "molecule_name": molecule,
                 "brand_name": brand,
                 "search_date": datetime.now().isoformat(),
+                "cache_expiry_date": (datetime.now() + timedelta(days=180)).isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v29.1-COMPLETE (EPO + Google + INPI + MERGE)",
-                "sources": ["EPO OPS", "Google Patents", "INPI (Complete Parse + Merge)"]
+                "version": "Pharmyrus v29.1-COMPLETE",
+                "sources_used": {
+                    "epo_ops": True,
+                    "google_patents": True,
+                    "inpi": True,
+                    "pubchem": True,
+                    "openfda": False,
+                    "fda_orange_book": False,
+                    "pubmed": False,
+                    "clinicaltrials_gov": False,
+                    "drugbank": False
+                },
+                "countries_processed": target_countries,
+                "last_update": datetime.now().isoformat()
             },
-            "summary": {
-                "total_wos": len(all_wos),
-                "epo_wos": len(epo_wos),
-                "google_wos": len(google_wos),
-                "inpi_brs": len(inpi_patents),
-                "total_patents": len(all_patents),
-                "by_country": {c: len(patents_by_country.get(c, [])) for c in target_countries},
-                "pubchem_dev_codes": pubchem["dev_codes"],
-                "pubchem_cas": pubchem["cas"]
+            
+            "patent_discovery": {
+                "summary": {
+                    "total_wo_patents": len(all_wos),
+                    "total_patents": len(all_patents),
+                    "by_country": {c: len(patents_by_country.get(c, [])) for c in target_countries},
+                    "by_source": {
+                        "EPO": len(patents_by_source["EPO"]),
+                        "INPI": len(patents_by_source["INPI"]),
+                        "Google Patents": len(patents_by_source["Google Patents"])
+                    },
+                    "epo_wos": len(epo_wos),
+                    "google_wos": len(google_wos),
+                    "inpi_direct_brs": len(inpi_patents),
+                    "merged_unique_patents": len(all_patents)
+                },
+                
+                "patent_cliff": patent_cliff,
+                
+                "wo_patents": [
+                    {
+                        "wo_number": wo,
+                        "link_espacenet": f"https://worldwide.espacenet.com/patent/search?q=pn%3D{wo}",
+                        "link_google_patents": f"https://patents.google.com/patent/{wo}",
+                        "source": "EPO" if wo in epo_wos else "Google Patents"
+                    }
+                    for wo in sorted(list(all_wos))
+                ],
+                
+                "patents_by_country": patents_by_country,
+                "all_patents": all_patents
             },
-            "wo_patents": sorted(list(all_wos)),
-            "patents_by_country": patents_by_country,
-            "all_patents": all_patents
+            
+            "research_and_development": {
+                "molecular_data": {
+                    "pubchem_cid": None,
+                    "molecular_formula": None,
+                    "molecular_weight": None,
+                    "smiles": None,
+                    "synonyms": pubchem.get("synonyms", []),
+                    "development_codes": pubchem.get("dev_codes", []),
+                    "cas_number": pubchem.get("cas"),
+                    "source": "PubChem",
+                    "pubchem_url": f"https://pubchem.ncbi.nlm.nih.gov/compound/{molecule}"
+                },
+                
+                "clinical_trials": {
+                    "note": "ClinicalTrials.gov integration pending",
+                    "count": 0,
+                    "trials": []
+                },
+                
+                "regulatory_data": {
+                    "note": "FDA Orange Book & OpenFDA integration pending",
+                    "fda_approval": None,
+                    "orange_book": {}
+                },
+                
+                "literature": {
+                    "note": "PubMed integration pending",
+                    "count": 0,
+                    "publications": []
+                },
+                
+                "drugbank": {
+                    "note": "DrugBank integration pending",
+                    "drugbank_id": None
+                }
+            }
         }
 
 
