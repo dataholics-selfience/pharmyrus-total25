@@ -1,17 +1,16 @@
 """
-Pharmyrus v28.9 - ZERO PLAYWRIGHT (httpx only!)
+Pharmyrus v28.10 - GROQ MODEL FIX + HARDCODED PT DICTIONARY
 Layer 1: EPO OPS (HTTP direto)
-Layer 2: Google Patents (httpx + regex - NO PLAYWRIGHT!)  
-Layer 3: INPI Brazilian (httpx direto - 3X RUNS!)
+Layer 2: Google Patents (httpx + regex)  
+Layer 3: INPI Brazilian (httpx direto - 3X RUNS + PT TRANSLATION!)
 
-🔥 NEW v28.9 - ZERO PLAYWRIGHT:
-✅ google_patents_crawler.py REESCRITO - apenas httpx
-✅ inpi_crawler.py - apenas httpx
-✅ SEM Playwright em NENHUM arquivo
-✅ Build ultra-rápido (~1 min)
-✅ Container pequeno (~200MB)
-✅ INPI 3x runs mantidos
-✅ Tradução PT via Groq mantida
+🔥 NEW v28.10 - TRANSLATION FIX:
+✅ Groq model atualizado: llama-3.3-70b-versatile
+✅ Dicionário hardcoded com 15+ moléculas pharma comuns
+✅ Fallback inteligente: dicionário → Groq → original
+✅ INPI agora busca em PORTUGUÊS!
+✅ Darolutamide → Darolutamida ✅
+✅ Zero dependências Playwright
 """
 
 from fastapi import FastAPI, HTTPException
@@ -44,7 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pharmyrus")
 logger.info("=" * 80)
-logger.info(f"📝 Pharmyrus v28.9 NO-PLAYWRIGHT - Logs persistentes em /tmp/pharmyrus.log")
+logger.info(f"📝 Pharmyrus v28.10 GROQ-FIX - Logs persistentes em /tmp/pharmyrus.log")
 logger.info("=" * 80)
 
 # EPO Credentials (MESMAS QUE FUNCIONAM)
@@ -1311,7 +1310,7 @@ async def search_patents(request: SearchRequest):
                 "search_date": datetime.now().isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v28.9 (ZERO PLAYWRIGHT)",
+                "version": "Pharmyrus v28.10 (GROQ FIX + PT DICT)",
                 "sources": ["EPO OPS (FULL)", "Google Patents (AGGRESSIVE)", "INPI Brazilian (DIRECT)"]
             },
             "summary": {

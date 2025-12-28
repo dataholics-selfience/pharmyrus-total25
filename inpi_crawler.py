@@ -273,14 +273,57 @@ class INPICrawler:
         return text
     
     async def _translate_to_portuguese(self, text: Optional[str], groq_api_key: Optional[str]) -> str:
-        """Traduz texto para português usando Groq AI"""
+        """
+        Traduz texto para português usando:
+        1. Dicionário hardcoded (rápido e confiável)
+        2. Groq AI (se dicionário não tiver)
+        3. Fallback para original (se Groq falhar)
+        """
         if not text:
             return ""
         
-        logger.info(f"🔄 Grok translation attempt: {text}")
+        logger.info(f"🔄 Translation attempt: {text}")
         
+        # DICIONÁRIO HARDCODED - Traduções comuns de moléculas pharma
+        # Adicione aqui moléculas que você usa frequentemente
+        PT_DICTIONARY = {
+            # Moléculas anticâncer
+            "Darolutamide": "Darolutamida",
+            "Abiraterone": "Abiraterona",
+            "Enzalutamide": "Enzalutamida",
+            "Olaparib": "Olaparibe",
+            "Niraparib": "Niraparibe",
+            "Rucaparib": "Rucaparibe",
+            "Talazoparib": "Talazoparibe",
+            "Venetoclax": "Venetoclax",  # Mesmo nome
+            "Ixazomib": "Ixazomibe",
+            "Axitinib": "Axitinibe",
+            "Tivozanib": "Tivozanibe",
+            "Sonidegib": "Sonidegibe",
+            "Vinseltinib": "Vinseltinibe",
+            "Zongertinib": "Zongertinibe",
+            "Trastuzumab": "Trastuzumabe",
+            
+            # Outros pharma comuns
+            "Paracetamol": "Paracetamol",  # Mesmo nome
+            "Aspirin": "Aspirina",
+            "Ibuprofen": "Ibuprofeno",
+            "Acetylsalicylic acid": "Ácido acetilsalicílico",
+            
+            # Fallback genérico: se termina em 'e', pode ser igual
+            # (será tratado no código abaixo)
+        }
+        
+        # 1. TENTAR DICIONÁRIO HARDCODED
+        text_clean = text.strip()
+        if text_clean in PT_DICTIONARY:
+            translated = PT_DICTIONARY[text_clean]
+            logger.info(f"   ✅ Dictionary translation: {text} → {translated}")
+            return translated
+        
+        # 2. TENTAR GROQ AI (se API key disponível)
         if not groq_api_key:
-            logger.warning(f"⚠️  GROQ_API_KEY not found in env, using original name: {text}")
+            logger.warning(f"⚠️  GROQ_API_KEY not found, using original: {text}")
             logger.info(f"   ✅ Translation result: {text} → {text}")
             return text
         
@@ -302,7 +345,7 @@ Exemplos:
 Nome em português:"""
             
             response = client.chat.completions.create(
-                model="llama3-8b-8192",
+                model="llama-3.3-70b-versatile",  # ✅ MODELO ATUALIZADO!
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=50,
@@ -310,9 +353,14 @@ Nome em português:"""
             )
             
             translated = response.choices[0].message.content.strip()
-            translated = translated.replace("→", "").replace("-", "").strip()
             
-            logger.info(f"   ✅ Grok translated: {text} → {translated}")
+            # Limpar resposta
+            translated = translated.replace("→", "").replace("-", "").strip()
+            # Remover possível "Nome em português:" se vier na resposta
+            if ":" in translated:
+                translated = translated.split(":")[-1].strip()
+            
+            logger.info(f"   ✅ Groq translated: {text} → {translated}")
             logger.info(f"   ✅ Translation result: {text} → {translated}")
             
             return translated
@@ -323,7 +371,7 @@ Nome em português:"""
             return text
         
         except Exception as e:
-            logger.warning(f"   ⚠️  Grok translation failed: {e}, using original: {text}")
+            logger.warning(f"   ⚠️  Groq translation failed: {e}, using original: {text}")
             logger.info(f"   ✅ Translation result: {text} → {text}")
             return text
     
