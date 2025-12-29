@@ -51,6 +51,9 @@ logger = logging.getLogger("pharmyrus")
 EPO_KEY = "G5wJypxeg0GXEJoMGP37tdK370aKxeMszGKAkD6QaR0yiR5X"
 EPO_SECRET = "zg5AJ0EDzXdJey3GaFNM8ztMVxHKXRrAihXH93iS5ZAzKPAPMFLuVUfiEuAqpdbz"
 
+# INPI Credentials
+INPI_PASSWORD = "coresxxx"
+
 
 def format_date(date_str: str) -> str:
     """Formata data de YYYYMMDD para YYYY-MM-DD"""

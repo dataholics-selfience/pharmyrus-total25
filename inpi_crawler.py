@@ -356,15 +356,47 @@ class INPICrawler:
                         if br_number not in self.found_brs:
                             self.found_brs.add(br_number)
                             
-                            results.append({
-                                "patent_number": br_number,
-                                "country": "BR",
-                                "source": "INPI",
-                                "search_term": term,
-                                "search_field": field
-                            })
+                            logger.info(f"         → {br_number} - Fetching details...")
                             
-                            logger.info(f"         → {br_number}")
+                            # Click the link to get patent details
+                            try:
+                                await self.page.click(f'a[href*="Action=detail"][href*="{br_number}"]')
+                                await self.page.wait_for_load_state('networkidle', timeout=180000)
+                                await asyncio.sleep(2)
+                                
+                                # Parse complete details
+                                details = await self._parse_patent_details(br_number)
+                                if details and details.get('patent_number'):
+                                    details['source'] = 'INPI'
+                                    details['search_term'] = term
+                                    details['search_field'] = field
+                                    results.append(details)
+                                    logger.info(f"            ✅ Parsed {sum([1 for v in details.values() if v])} fields")
+                                else:
+                                    # Fallback: add minimal data
+                                    results.append({
+                                        "patent_number": br_number,
+                                        "country": "BR",
+                                        "source": "INPI",
+                                        "search_term": term,
+                                        "search_field": field
+                                    })
+                                    logger.warning(f"            ⚠️  Minimal data only")
+                                
+                                # Go back to results page
+                                await self.page.go_back(wait_until='networkidle', timeout=180000)
+                                await asyncio.sleep(1)
+                                
+                            except Exception as e:
+                                logger.error(f"            ❌ Error fetching details: {e}")
+                                # Fallback: add minimal data
+                                results.append({
+                                    "patent_number": br_number,
+                                    "country": "BR",
+                                    "source": "INPI",
+                                    "search_term": term,
+                                    "search_field": field
+                                })
                 
                 except Exception as e:
                     logger.warning(f"      ⚠️  Error parsing link: {str(e)}")
@@ -869,7 +901,7 @@ class INPICrawler:
                 
                 # Translate brand if different
                 if brand and brand.lower() != molecule.lower():
-                    brand_pt = await self._groq_translate(client, brand, groq_api_key)
+                    brand_pt = await self._groq_translate(client, brand, groq_api_key, is_brand=True)
                 else:
                     brand_pt = molecule_pt
                 
@@ -883,7 +915,8 @@ class INPICrawler:
         self,
         client: httpx.AsyncClient,
         text: str,
-        groq_api_key: str
+        groq_api_key: str,
+        is_brand: bool = False
     ) -> str:
         """
         Translate text to Portuguese using Groq
@@ -892,11 +925,21 @@ class INPICrawler:
             client: HTTP client
             text: Text to translate
             groq_api_key: Groq API key
+            is_brand: True if translating brand name (uses different prompt)
         
         Returns:
             Translated text in Portuguese
         """
         try:
+            if is_brand:
+                # Para marcas: buscar nome brasileiro ou manter original
+                system_prompt = "You are a pharmaceutical expert. If this brand name has a Brazilian/Portuguese version, return it. Otherwise, return the ORIGINAL name unchanged. Return ONLY the name, nothing else."
+                user_prompt = f"What is the Brazilian/Portuguese brand name for: {text}\nIf there is no Brazilian version, return exactly: {text}"
+            else:
+                # Para moléculas: traduzir normalmente
+                system_prompt = "You are a pharmaceutical translator. Translate drug molecule names to Portuguese (scientific names). Return ONLY the translated name, nothing else."
+                user_prompt = f"Translate this pharmaceutical molecule name to Portuguese: {text}"
+            
             response = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={
@@ -908,11 +951,11 @@ class INPICrawler:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are a pharmaceutical translator. Translate drug names to Portuguese. Return ONLY the translated name, nothing else."
+                            "content": system_prompt
                         },
                         {
                             "role": "user",
-                            "content": f"Translate this pharmaceutical name to Portuguese: {text}"
+                            "content": user_prompt
                         }
                     ],
                     "temperature": 0.1,
