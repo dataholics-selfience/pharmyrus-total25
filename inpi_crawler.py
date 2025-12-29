@@ -387,216 +387,285 @@ class INPICrawler:
 # Substituir o método existente por esta versão corrigida
 
 def _parse_patent_details(self, html: str) -> Dict[str, Any]:
-    """Parse detailed patent information with improved error handling"""
-    soup = BeautifulSoup(html, 'html.parser')
-    data = {}
-    
-    try:
-        # Parse basic fields with safe navigation
-        rows = soup.find_all('tr')
-        field_count = 0
+        """
+        Parse detailed patent information from INPI result page
         
-        for row in rows:
+        Args:
+            html: HTML content of patent details page
+            
+        Returns:
+            Dictionary with parsed patent fields
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        data = {}
+        
+        try:
+            # Parse basic fields with safe navigation
+            rows = soup.find_all('tr')
+            field_count = 0
+            
+            for row in rows:
+                try:
+                    # Find alert spans (field codes like (21), (22), etc.)
+                    alert = row.find('font', class_='alerta')
+                    if not alert:
+                        continue
+                    
+                    field_code = alert.get_text(strip=True)
+                    
+                    # Get the value cell (next td after the label)
+                    cells = row.find_all('td')
+                    if len(cells) < 2:
+                        continue
+                    
+                    value_cell = cells[1]
+                    value = value_cell.get_text(strip=True)
+                    
+                    # Clean and store based on field code
+                    if '(21)' in field_code:
+                        # Application number
+                        data['application_number'] = value
+                        field_count += 1
+                        
+                    elif '(22)' in field_code:
+                        # Filing date
+                        data['filing_date'] = value
+                        field_count += 1
+                        
+                    elif '(43)' in field_code:
+                        # Publication date
+                        data['publication_date'] = value
+                        field_count += 1
+                        
+                    elif '(47)' in field_code:
+                        # Grant date
+                        data['grant_date'] = value if value != '-' else None
+                        field_count += 1
+                        
+                    elif '(51)' in field_code:
+                        # IPC classification
+                        ipc_links = value_cell.find_all('a', class_='normal')
+                        if ipc_links:
+                            data['ipc_classification'] = [link.get_text(strip=True) for link in ipc_links]
+                        else:
+                            data['ipc_classification'] = [value] if value else []
+                        field_count += 1
+                        
+                    elif '(54)' in field_code:
+                        # Title
+                        title_div = value_cell.find('div', id='tituloContext')
+                        if title_div:
+                            data['title'] = title_div.get_text(strip=True)
+                        else:
+                            data['title'] = value
+                        field_count += 1
+                        
+                    elif '(57)' in field_code:
+                        # Abstract
+                        abstract_div = value_cell.find('div', id='resumoContext')
+                        if abstract_div:
+                            data['abstract'] = abstract_div.get_text(strip=True)
+                        else:
+                            data['abstract'] = value
+                        field_count += 1
+                        
+                    elif '(71)' in field_code:
+                        # Applicant
+                        data['applicant'] = value
+                        field_count += 1
+                        
+                    elif '(72)' in field_code:
+                        # Inventors - split by '/'
+                        inventors = [inv.strip() for inv in value.split('/') if inv.strip()]
+                        data['inventors'] = inventors
+                        field_count += 1
+                        
+                    elif '(74)' in field_code:
+                        # Agent
+                        data['agent'] = value
+                        field_count += 1
+                        
+                    elif '(30)' in field_code:
+                        # Priority data - parse table
+                        priority_table = value_cell.find('table')
+                        if priority_table:
+                            priority_data = []
+                            priority_rows = priority_table.find_all('tr')[1:]  # Skip header
+                            for prow in priority_rows:
+                                pcells = prow.find_all('td')
+                                if len(pcells) >= 3:
+                                    priority_data.append({
+                                        'country': pcells[0].get_text(strip=True),
+                                        'number': pcells[1].get_text(strip=True),
+                                        'date': pcells[2].get_text(strip=True)
+                                    })
+                            if priority_data:
+                                data['priority'] = priority_data
+                                field_count += 1
+                        
+                    elif '(85)' in field_code:
+                        # National phase date
+                        data['national_phase_date'] = value
+                        field_count += 1
+                        
+                    elif '(86)' in field_code:
+                        # PCT data
+                        pct_text = value_cell.get_text(strip=True)
+                        data['pct'] = pct_text
+                        field_count += 1
+                        
+                    elif '(87)' in field_code:
+                        # WO publication
+                        wo_text = value_cell.get_text(strip=True)
+                        data['wo_publication'] = wo_text
+                        field_count += 1
+                        
+                except Exception as e:
+                    self.logger.debug(f"Error parsing row: {e}")
+                    continue
+            
+            # Parse publications (despachos)
             try:
-                # Find alert spans (field codes like (21), (22), etc.)
-                alert = row.find('font', class_='alerta')
-                if not alert:
-                    continue
+                publications = []
+                pub_tables = soup.find_all('table', width='100%')
                 
-                field_code = alert.get_text(strip=True)
+                for table in pub_tables:
+                    # Check if this is the publications table
+                    header = table.find('th', string=lambda x: x and 'Despacho' in str(x))
+                    if not header:
+                        continue
+                    
+                    pub_rows = table.find_all('tr')
+                    for prow in pub_rows:
+                        if prow.get('bgcolor') in ['white', '#E0E0E0']:
+                            try:
+                                cells = prow.find_all('td')
+                                if len(cells) >= 3:
+                                    rpi = cells[0].get_text(strip=True)
+                                    date = cells[1].get_text(strip=True)
+                                    
+                                    # Dispatch code
+                                    code_cell = cells[2]
+                                    code_link = code_cell.find('a')
+                                    code = code_link.get_text(strip=True) if code_link else code_cell.get_text(strip=True)
+                                    
+                                    if rpi and date and code:
+                                        publications.append({
+                                            'rpi': rpi,
+                                            'date': date,
+                                            'code': code
+                                        })
+                            except Exception as e:
+                                self.logger.debug(f"Error parsing publication row: {e}")
+                                continue
                 
-                # Get the value cell (next td after the label)
-                cells = row.find_all('td')
-                if len(cells) < 2:
-                    continue
-                
-                value_cell = cells[1]
-                value = value_cell.get_text(strip=True)
-                
-                # Clean and store based on field code
-                if '(21)' in field_code:
-                    data['application_number'] = value
-                    field_count += 1
-                elif '(22)' in field_code:
-                    data['filing_date'] = value
-                    field_count += 1
-                elif '(43)' in field_code:
-                    data['publication_date'] = value
-                    field_count += 1
-                elif '(47)' in field_code:
-                    data['grant_date'] = value if value != '-' else None
-                    field_count += 1
-                elif '(51)' in field_code:
-                    # IPC classification
-                    ipc_links = value_cell.find_all('a', class_='normal')
-                    if ipc_links:
-                        data['ipc_classification'] = [link.get_text(strip=True) for link in ipc_links]
-                    else:
-                        data['ipc_classification'] = [value] if value else []
-                    field_count += 1
-                elif '(54)' in field_code:
-                    data['title'] = value
-                    field_count += 1
-                elif '(57)' in field_code:
-                    data['abstract'] = value
-                    field_count += 1
-                elif '(71)' in field_code:
-                    data['applicant'] = value
-                    field_count += 1
-                elif '(72)' in field_code:
-                    # Inventors - split by '/'
-                    inventors = [inv.strip() for inv in value.split('/')]
-                    data['inventors'] = inventors
-                    field_count += 1
-                elif '(74)' in field_code:
-                    data['agent'] = value
-                    field_count += 1
-                elif '(30)' in field_code:
-                    # Priority data - parse table
-                    priority_table = value_cell.find('table')
-                    if priority_table:
-                        priority_data = []
-                        priority_rows = priority_table.find_all('tr')[1:]  # Skip header
-                        for prow in priority_rows:
-                            pcells = prow.find_all('td')
-                            if len(pcells) >= 3:
-                                priority_data.append({
-                                    'country': pcells[0].get_text(strip=True),
-                                    'number': pcells[1].get_text(strip=True),
-                                    'date': pcells[2].get_text(strip=True)
-                                })
-                        data['priority'] = priority_data
-                    field_count += 1
-                elif '(85)' in field_code:
-                    data['national_phase_date'] = value
-                    field_count += 1
-                elif '(86)' in field_code:
-                    # PCT data
-                    pct_text = value_cell.get_text(strip=True)
-                    data['pct'] = pct_text
-                    field_count += 1
-                elif '(87)' in field_code:
-                    # WO publication
-                    wo_text = value_cell.get_text(strip=True)
-                    data['wo_publication'] = wo_text
+                if publications:
+                    data['publications'] = publications
                     field_count += 1
                     
             except Exception as e:
-                logging.debug(f"Error parsing row: {e}")
-                continue
-        
-        # Parse publications (despachos)
-        publications = []
-        pub_section = soup.find('label', string=lambda x: x and 'Publicações' in x)
-        if pub_section:
-            pub_parent = pub_section.find_parent('div', class_='accordion-item')
-            if pub_parent:
-                pub_table = pub_parent.find('table')
-                if pub_table:
-                    pub_rows = pub_table.find_all('tr')[1:]  # Skip header
-                    for prow in pub_rows:
-                        try:
-                            cells = prow.find_all('td')
-                            if len(cells) >= 3:
-                                rpi = cells[0].get_text(strip=True)
-                                date = cells[1].get_text(strip=True)
-                                code_cell = cells[2]
-                                code_link = code_cell.find('a')
-                                code = code_link.get_text(strip=True) if code_link else code_cell.get_text(strip=True)
-                                
-                                publications.append({
-                                    'rpi': rpi,
-                                    'date': date,
-                                    'code': code
-                                })
-                        except Exception as e:
-                            logging.debug(f"Error parsing publication row: {e}")
-                            continue
-        
-        if publications:
-            data['publications'] = publications
-            field_count += 1
-        
-        # Parse petitions
-        petitions = []
-        pet_section = soup.find('label', string=lambda x: x and 'Petições' in x)
-        if pet_section:
-            pet_parent = pet_section.find_parent('div', class_='accordion-item')
-            if pet_parent:
-                pet_table = pet_parent.find('table')
-                if pet_table:
-                    pet_rows = pet_table.find_all('tr')
+                self.logger.debug(f"Error parsing publications section: {e}")
+            
+            # Parse petitions
+            try:
+                petitions = []
+                pet_tables = soup.find_all('table', width='780px')
+                
+                for table in pet_tables:
+                    # Check if this is the petitions table
+                    header = table.find('th', string=lambda x: x and 'Serviço' in str(x))
+                    if not header:
+                        continue
+                    
+                    pet_rows = table.find_all('tr')
                     for prow in pet_rows:
-                        try:
-                            if prow.get('bgcolor') in ['white', '#E0E0E0']:
+                        if prow.get('bgcolor') in ['white', '#E0E0E0']:
+                            try:
                                 cells = prow.find_all('td')
                                 if len(cells) >= 4:
                                     service = cells[0].get_text(strip=True)
                                     protocol = cells[2].get_text(strip=True)
                                     date = cells[3].get_text(strip=True)
                                     
-                                    petitions.append({
-                                        'service': service,
-                                        'protocol': protocol,
-                                        'date': date
-                                    })
-                        except Exception as e:
-                            logging.debug(f"Error parsing petition row: {e}")
-                            continue
+                                    if service and protocol and date:
+                                        petitions.append({
+                                            'service': service,
+                                            'protocol': protocol,
+                                            'date': date
+                                        })
+                            except Exception as e:
+                                self.logger.debug(f"Error parsing petition row: {e}")
+                                continue
+                
+                if petitions:
+                    data['petitions'] = petitions
+                    field_count += 1
+                    
+            except Exception as e:
+                self.logger.debug(f"Error parsing petitions section: {e}")
+            
+            # Parse annuities
+            try:
+                annuities = []
+                ann_section = soup.find('label', string=lambda x: x and 'Anuidades' in str(x))
+                
+                if ann_section:
+                    # Find annuity table
+                    parent = ann_section.find_parent('div', class_='accordion-item')
+                    if parent:
+                        ann_table = parent.find('table')
+                        if ann_table:
+                            headers = ann_table.find_all('th')
+                            for header in headers:
+                                try:
+                                    header_text = header.get_text(strip=True)
+                                    if 'Anuidade' in header_text:
+                                        # Extract annuity number
+                                        num_match = header_text.split('ª')[0].strip() if 'ª' in header_text else None
+                                        if not num_match:
+                                            continue
+                                        
+                                        # Check for status icon
+                                        status = 'unknown'
+                                        status_img = header.find('img')
+                                        if status_img:
+                                            alt_text = status_img.get('alt', '')
+                                            if 'Averbada' in alt_text or 'OK' in alt_text:
+                                                status = 'paid'
+                                            elif 'não Averbada' in alt_text or 'não ok' in alt_text or 'não contém' in alt_text:
+                                                status = 'unpaid'
+                                        
+                                        annuities.append({
+                                            'number': num_match,
+                                            'status': status
+                                        })
+                                except Exception as e:
+                                    self.logger.debug(f"Error parsing annuity: {e}")
+                                    continue
+                
+                if annuities:
+                    data['annuities'] = annuities
+                    field_count += 1
+                    
+            except Exception as e:
+                self.logger.debug(f"Error parsing annuities section: {e}")
+            
+            # Check for documents
+            try:
+                doc_imgs = soup.find_all('img', {'class': 'salvaDocumento'})
+                if doc_imgs:
+                    data['has_documents'] = True
+                    field_count += 1
+            except Exception as e:
+                self.logger.debug(f"Error checking documents: {e}")
+            
+            self.logger.info(f"            ✅ Parsed {field_count} fields")
+            
+        except Exception as e:
+            self.logger.error(f"Error in _parse_patent_details: {e}")
+            self.logger.debug(f"HTML snippet: {html[:500]}")
         
-        if petitions:
-            data['petitions'] = petitions
-            field_count += 1
-        
-        # Parse annuities
-        annuities = []
-        ann_section = soup.find('label', string=lambda x: x and 'Anuidades' in x)
-        if ann_section:
-            ann_parent = ann_section.find_parent('div', class_='accordion-item')
-            if ann_parent:
-                ann_table = ann_parent.find('table')
-                if ann_table:
-                    ann_headers = ann_table.find_all('th')
-                    for header in ann_headers:
-                        try:
-                            header_text = header.get_text(strip=True)
-                            if 'Anuidade' in header_text:
-                                annuity_num = header_text.split('ª')[0].strip()
-                                # Check for status icon
-                                status_img = header.find('img')
-                                status = 'unknown'
-                                if status_img:
-                                    alt_text = status_img.get('alt', '')
-                                    if 'Averbada' in alt_text or 'OK' in alt_text:
-                                        status = 'paid'
-                                    elif 'não Averbada' in alt_text or 'não ok' in alt_text:
-                                        status = 'unpaid'
-                                
-                                annuities.append({
-                                    'number': annuity_num,
-                                    'status': status
-                                })
-                        except Exception as e:
-                            logging.debug(f"Error parsing annuity: {e}")
-                            continue
-        
-        if annuities:
-            data['annuities'] = annuities
-            field_count += 1
-        
-        # Add document link if available
-        doc_imgs = soup.find_all('img', {'class': 'salvaDocumento'})
-        if doc_imgs:
-            data['has_documents'] = True
-            field_count += 1
-        
-        logging.info(f"         ✅ Parsed {field_count} fields")
-        
-    except Exception as e:
-        logging.error(f"Error in _parse_patent_details: {e}")
-        logging.debug(f"HTML snippet: {html[:500]}")
-    
-    return data
+        return data
     
     async def _check_session_expired(self) -> bool:
         """
