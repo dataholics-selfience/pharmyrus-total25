@@ -221,7 +221,7 @@ class INPICrawler:
             await self.page.goto(
                 "https://busca.inpi.gov.br/pePI/",
                 wait_until='networkidle',
-                timeout=180000  # 3 minutes
+                timeout=60000  # 1 min
             )
             
             await asyncio.sleep(2)
@@ -229,16 +229,16 @@ class INPICrawler:
             logger.info(f"   🔑 Logging in as {username}...")
             
             # Fill login form
-            await self.page.fill('input[name="T_Login"]', username)
-            await self.page.fill('input[name="T_Senha"]', password)
+            await self.page.fill('input[name="T_Login"]', username, timeout=10000)
+            await self.page.fill('input[name="T_Senha"]', password, timeout=10000)
             
             await asyncio.sleep(1)
             
             # Click Continue button (value contains "Continuar")
-            await self.page.click('input[type="submit"][value*="Continuar"]')
+            await self.page.click('input[type="submit"][value*="Continuar"]', timeout=10000)
             
             # Wait for navigation
-            await self.page.wait_for_load_state('networkidle', timeout=180000)
+            await self.page.wait_for_load_state('networkidle', timeout=60000)
             
             await asyncio.sleep(2)
             
@@ -294,29 +294,29 @@ class INPICrawler:
                 await self.page.goto(
                     "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
                     wait_until='networkidle',
-                    timeout=180000
+                    timeout=60000  # 1 min
                 )
                 await asyncio.sleep(2)
             
             # Fill search form
-            await self.page.fill('input[name="ExpressaoPesquisa"]', term)
+            await self.page.fill('input[name="ExpressaoPesquisa"]', term, timeout=10000)
             
-            # Select field (Titulo or Resumo)
-            await self.page.select_option('select[name="Coluna"]', field)
+            # Select field (Titulo or Resumo) with timeout
+            await self.page.select_option('select[name="Coluna"]', field, timeout=10000)
             
             # Select "todas as palavras"
-            await self.page.select_option('select[name="FormaPesquisa"]', 'todasPalavras')
+            await self.page.select_option('select[name="FormaPesquisa"]', 'todasPalavras', timeout=10000)
             
             # Select 100 results per page
-            await self.page.select_option('select[name="RegisterPerPage"]', '100')
+            await self.page.select_option('select[name="RegisterPerPage"]', '100', timeout=10000)
             
             await asyncio.sleep(1)
             
             # Click Search button
-            await self.page.click('input[type="submit"][name="botao"]')
+            await self.page.click('input[type="submit"][name="botao"]', timeout=10000)
             
-            # Wait for results
-            await self.page.wait_for_load_state('networkidle', timeout=180000)
+            # Wait for results (shorter timeout)
+            await self.page.wait_for_load_state('networkidle', timeout=60000)
             
             await asyncio.sleep(2)
             
@@ -360,8 +360,8 @@ class INPICrawler:
                             
                             # Click the link to get patent details
                             try:
-                                await self.page.click(f'a[href*="Action=detail"][href*="{br_number}"]')
-                                await self.page.wait_for_load_state('networkidle', timeout=180000)
+                                await self.page.click(f'a[href*="Action=detail"][href*="{br_number}"]', timeout=10000)
+                                await self.page.wait_for_load_state('networkidle', timeout=60000)
                                 await asyncio.sleep(2)
                                 
                                 # Parse complete details
@@ -384,7 +384,7 @@ class INPICrawler:
                                     logger.warning(f"            ⚠️  Minimal data only")
                                 
                                 # Go back to results page
-                                await self.page.go_back(wait_until='networkidle', timeout=180000)
+                                await self.page.go_back(wait_until='networkidle', timeout=60000)
                                 await asyncio.sleep(1)
                                 
                             except Exception as e:
@@ -785,45 +785,83 @@ class INPICrawler:
                     logger.error("❌ Login failed for number search")
                     return []
                 
-                # Search each BR by number
+                # Search each BR by number - DIRECT URL approach
                 for i, br_number in enumerate(br_numbers, 1):
                     try:
                         logger.info(f"   📄 {i}/{len(br_numbers)}: {br_number}")
                         
-                        # Navigate to search page
-                        await self.page.goto(
-                            "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
-                            wait_until='networkidle',
-                            timeout=180000
-                        )
-                        await asyncio.sleep(1)
+                        # DIRECT URL to patent details (skip search form!)
+                        # Extract process code from BR number (remove BR prefix and format)
+                        process_code = br_number.replace("BR", "").replace("BR", "")
                         
-                        # Search by number in "Número do Pedido" field
-                        await self.page.fill('input[name="ExpressaoPesquisa"]', br_number)
-                        await self.page.select_option('select[name="Coluna"]', 'NumPedido')
-                        await self.page.click('input[type="submit"][name="botao"]')
-                        await self.page.wait_for_load_state('networkidle', timeout=180000)
-                        await asyncio.sleep(2)
+                        # Try direct detail URL first
+                        detail_url = f"https://busca.inpi.gov.br/pePI/servlet/PatenteServletController?Action=detail&CodPedido={process_code}"
                         
-                        content = await self.page.content()
-                        
-                        # If direct result, parse it
-                        if "Action=detail" in content:
-                            # Click first result
-                            soup = BeautifulSoup(content, 'html.parser')
-                            first_link = soup.find('a', href=re.compile(r'Action=detail'))
-                            if first_link:
-                                await self.page.click(f'a[href*="Action=detail"]')
-                                await self.page.wait_for_load_state('networkidle', timeout=180000)
-                                await asyncio.sleep(2)
-                                
-                                # Parse details
+                        try:
+                            await self.page.goto(detail_url, wait_until='networkidle', timeout=30000)
+                            await asyncio.sleep(2)
+                            
+                            content = await self.page.content()
+                            
+                            # Check if we got the detail page
+                            if "(21)" in content or "Título" in content:
+                                # Success! Parse details
                                 details = await self._parse_patent_details(br_number)
-                                if details:
-                                    details['patent_number'] = br_number
-                                    details['country'] = 'BR'
+                                if details and details.get('patent_number'):
                                     details['source'] = 'INPI'
                                     all_patents.append(details)
+                                    logger.info(f"      ✅ Direct URL worked!")
+                                    await asyncio.sleep(1)
+                                    continue
+                        except Exception as e:
+                            logger.warning(f"      ⚠️  Direct URL failed: {e}")
+                        
+                        # Fallback: Use search form (but with timeout!)
+                        try:
+                            await self.page.goto(
+                                "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
+                                wait_until='networkidle',
+                                timeout=30000
+                            )
+                            await asyncio.sleep(1)
+                            
+                            # Fill and submit
+                            await self.page.fill('input[name="ExpressaoPesquisa"]', br_number)
+                            
+                            # Try to select Numero option (with timeout)
+                            try:
+                                await self.page.select_option('select[name="Coluna"]', 'Numero', timeout=5000)
+                            except:
+                                # If Numero fails, try Titulo as fallback
+                                try:
+                                    await self.page.select_option('select[name="Coluna"]', 'Titulo', timeout=5000)
+                                except:
+                                    logger.warning(f"      ⚠️  Could not select search field, skipping {br_number}")
+                                    continue
+                            
+                            await self.page.click('input[type="submit"][name="botao"]')
+                            await self.page.wait_for_load_state('networkidle', timeout=30000)
+                            await asyncio.sleep(2)
+                            
+                            content = await self.page.content()
+                            
+                            # If results found, click first one
+                            if "Action=detail" in content:
+                                soup = BeautifulSoup(content, 'html.parser')
+                                first_link = soup.find('a', href=re.compile(r'Action=detail'))
+                                if first_link:
+                                    await self.page.click(f'a[href*="Action=detail"]', timeout=10000)
+                                    await self.page.wait_for_load_state('networkidle', timeout=30000)
+                                    await asyncio.sleep(2)
+                                    
+                                    # Parse details
+                                    details = await self._parse_patent_details(br_number)
+                                    if details and details.get('patent_number'):
+                                        details['source'] = 'INPI'
+                                        all_patents.append(details)
+                        
+                        except Exception as e:
+                            logger.error(f"      ❌ Search form failed: {e}")
                         
                         await asyncio.sleep(2)  # Rate limit
                         
