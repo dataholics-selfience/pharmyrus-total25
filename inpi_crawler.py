@@ -340,67 +340,77 @@ class INPICrawler:
             if patent_links:
                 logger.info(f"      ✅ Found {len(patent_links)} result(s) for '{term}' in {field}")
             
+            # First pass: collect all BR numbers and their detail URLs
+            br_details_to_fetch = []
             for link in patent_links:
                 try:
                     br_text = link.get_text(strip=True)
+                    href = link.get('href', '')
                     
                     # Extract BR number: "BR 11 2024 016586 8" -> "BR112024016586"
-                    # Remove ALL spaces and extra chars
                     br_clean = re.sub(r'\s+', '', br_text)
-                    
-                    # Extract just the BR number
                     match = re.search(r'(BR[A-Z]*\d+)', br_clean)
+                    
                     if match:
                         br_number = match.group(1)
-                        
                         if br_number not in self.found_brs:
                             self.found_brs.add(br_number)
                             
-                            logger.info(f"         → {br_number} - Fetching details...")
+                            # Build full URL
+                            if href.startswith('/'):
+                                detail_url = f"https://busca.inpi.gov.br{href}"
+                            else:
+                                detail_url = href
                             
-                            # Click the link to get patent details
-                            try:
-                                await self.page.click(f'a[href*="Action=detail"][href*="{br_number}"]', timeout=10000)
-                                await self.page.wait_for_load_state('networkidle', timeout=60000)
-                                await asyncio.sleep(2)
-                                
-                                # Parse complete details
-                                details = await self._parse_patent_details(br_number)
-                                if details and details.get('patent_number'):
-                                    details['source'] = 'INPI'
-                                    details['search_term'] = term
-                                    details['search_field'] = field
-                                    results.append(details)
-                                    logger.info(f"            ✅ Parsed {sum([1 for v in details.values() if v])} fields")
-                                else:
-                                    # Fallback: add minimal data
-                                    results.append({
-                                        "patent_number": br_number,
-                                        "country": "BR",
-                                        "source": "INPI",
-                                        "search_term": term,
-                                        "search_field": field
-                                    })
-                                    logger.warning(f"            ⚠️  Minimal data only")
-                                
-                                # Go back to results page
-                                await self.page.go_back(wait_until='networkidle', timeout=60000)
-                                await asyncio.sleep(1)
-                                
-                            except Exception as e:
-                                logger.error(f"            ❌ Error fetching details: {e}")
-                                # Fallback: add minimal data
-                                results.append({
-                                    "patent_number": br_number,
-                                    "country": "BR",
-                                    "source": "INPI",
-                                    "search_term": term,
-                                    "search_field": field
-                                })
-                
+                            br_details_to_fetch.append({
+                                'br_number': br_number,
+                                'url': detail_url
+                            })
                 except Exception as e:
-                    logger.warning(f"      ⚠️  Error parsing link: {str(e)}")
+                    logger.warning(f"      ⚠️  Error parsing link: {e}")
                     continue
+            
+            # Second pass: fetch details for each BR
+            for item in br_details_to_fetch:
+                br_number = item['br_number']
+                detail_url = item['url']
+                
+                try:
+                    logger.info(f"         → {br_number} - Fetching details...")
+                    
+                    # Navigate to detail page
+                    await self.page.goto(detail_url, wait_until='networkidle', timeout=60000)
+                    await asyncio.sleep(2)
+                    
+                    # Parse complete details
+                    details = await self._parse_patent_details(br_number)
+                    if details and details.get('patent_number'):
+                        details['source'] = 'INPI'
+                        details['search_term'] = term
+                        details['search_field'] = field
+                        results.append(details)
+                        logger.info(f"            ✅ Parsed {sum([1 for v in details.values() if v])} fields")
+                    else:
+                        # Fallback: add minimal data
+                        results.append({
+                            "patent_number": br_number,
+                            "country": "BR",
+                            "source": "INPI",
+                            "search_term": term,
+                            "search_field": field
+                        })
+                        logger.warning(f"            ⚠️  Minimal data only")
+                    
+                except Exception as e:
+                    logger.error(f"            ❌ Error fetching details: {e}")
+                    # Fallback: add minimal data
+                    results.append({
+                        "patent_number": br_number,
+                        "country": "BR",
+                        "source": "INPI",
+                        "search_term": term,
+                        "search_field": field
+                    })
             
         except Exception as e:
             logger.error(f"      ❌ Error in basic search: {str(e)}")
