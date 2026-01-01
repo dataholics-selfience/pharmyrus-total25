@@ -1292,7 +1292,12 @@ async def search_patents(request: SearchRequest):
         patent_families = group_patent_families(wo_list, patents_by_country)
         logger.info(f"   ✅ Grouped {len(patent_families)} families")
         
-        return {
+        logger.info("📦 Building final response...")
+        logger.info(f"   - {len(all_wos)} WO patents")
+        logger.info(f"   - {len(all_patents)} total patents")
+        logger.info(f"   - {len(patent_families)} families")
+        
+        response_data = {
             "metadata": {
                 "search_id": f"{molecule}_{int(datetime.now().timestamp())}",
                 "molecule_name": molecule,
@@ -1301,7 +1306,7 @@ async def search_patents(request: SearchRequest):
                 "cache_expiry_date": (datetime.now() + timedelta(days=180)).isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v30.1-FINAL",
+                "version": "Pharmyrus v30.2.5-RESPONSE-FIX",
                 "sources_used": {
                     "epo_ops": True,
                     "google_patents": True,
@@ -1388,6 +1393,11 @@ async def search_patents(request: SearchRequest):
                 }
             }
         }
+        
+        logger.info("   ✅ Response built successfully")
+        logger.info(f"🎉 Search complete in {elapsed:.2f}s!")
+        
+        return response_data
 
 
 if __name__ == "__main__":
