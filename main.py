@@ -78,23 +78,39 @@ def group_patent_families(wo_patents: List[Dict], country_patents: Dict[str, Lis
     """
     families = []
     
+    # Build reverse index for faster lookup: {wo_number: [patents]}
+    wo_to_patents = {}
+    for country, patents in country_patents.items():
+        for patent in patents:
+            # Get all WO numbers this patent is associated with
+            wo_primary = patent.get("wo_primary", "")
+            wo_numbers = patent.get("wo_numbers", [])
+            
+            all_wos = set([wo_primary] if wo_primary else [])
+            all_wos.update(wo_numbers)
+            
+            # Add this patent to each WO's list
+            for wo in all_wos:
+                if wo:
+                    if wo not in wo_to_patents:
+                        wo_to_patents[wo] = {country: [] for country in country_patents.keys()}
+                    if country not in wo_to_patents[wo]:
+                        wo_to_patents[wo][country] = []
+                    wo_to_patents[wo][country].append(patent)
+    
+    # Now build families efficiently
     for wo in wo_patents:
         wo_num = wo.get("wo_number", "")
         
         family = {
             "wo_number": wo_num,
             "wo_data": wo,
-            "national_patents": {}
+            "national_patents": wo_to_patents.get(wo_num, {country: [] for country in country_patents.keys()})
         }
         
-        # Agrupar patentes nacionais que pertencem a este WO
-        for country, patents in country_patents.items():
-            family["national_patents"][country] = [
-                p for p in patents 
-                if p.get("wo_primary") == wo_num or wo_num in p.get("wo_numbers", [])
-            ]
-        
         families.append(family)
+    
+    return families
     
     return families
 
@@ -1219,9 +1235,14 @@ async def search_patents(request: SearchRequest):
         # Calculate Patent Cliff
         logger.info("📊 Calculating Patent Cliff...")
         patent_cliff = calculate_patent_cliff(all_patents)
+        logger.info(f"   ✅ Patent Cliff calculated")
         
         # ADICIONAR expiration_date e status em CADA patente
-        for patent in all_patents:
+        logger.info("📅 Adding expiration dates to patents...")
+        for i, patent in enumerate(all_patents):
+            if i > 0 and i % 50 == 0:
+                logger.info(f"   Processed {i}/{len(all_patents)} patents...")
+            
             filing_date = patent.get("filing_date")
             if filing_date:
                 from patent_cliff import calculate_patent_expiration
@@ -1245,11 +1266,13 @@ async def search_patents(request: SearchRequest):
                         patent["patent_status"] = "Safe (>5 years)"
         
         # Separate by source
+        logger.info("📂 Separating by source...")
         patents_by_source = {
             "EPO": [p for p in all_patents if "EPO" in p.get("sources", [p.get("source", "")])],
             "INPI": [p for p in all_patents if "INPI" in p.get("sources", [p.get("source", "")])],
             "Google Patents": [p for p in all_patents if "Google" in str(p.get("sources", [p.get("source", "")]))]
         }
+        logger.info(f"   ✅ Separated by source")
         
         # CRIAR FAMÍLIAS DE PATENTES (WO → Patentes Nacionais)
         logger.info("👨‍👩‍👧‍👦 Grouping patent families...")
@@ -1262,7 +1285,9 @@ async def search_patents(request: SearchRequest):
             }
             for wo in sorted(list(all_wos))
         ]
+        logger.info(f"   Processing {len(wo_list)} WOs with {sum(len(p) for p in patents_by_country.values())} national patents...")
         patent_families = group_patent_families(wo_list, patents_by_country)
+        logger.info(f"   ✅ Grouped {len(patent_families)} families")
         
         return {
             "metadata": {
