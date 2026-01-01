@@ -1,22 +1,22 @@
 """
-Pharmyrus v29.0-LOGIN-COMPLETE - EPO + Google + INPI (LOGIN REAL!)
+Pharmyrus v31.0-INPI-ENRICHMENT - EPO + Google + INPI + INPI Enrichment Layer
 
 Layer 1: EPO OPS (FUNCIONANDO ✅)
 Layer 2: Google Patents Playwright (FUNCIONANDO ✅)  
-Layer 3: INPI Brazilian COM LOGIN (NOVO v29.0 ✅)
+Layer 3: INPI Brazilian Direct Search (FUNCIONANDO ✅)
+Layer 4: INPI Enrichment - Complete BR data (NOVO v31.0 ✅)
 
-🔥 v29.0 - INPI COMPLETO COM LOGIN:
+🔥 v31.0 - INPI ENRICHMENT LAYER:
 ✅ EPO mantido 100% (funciona perfeitamente)
 ✅ Google Playwright mantido 100% (funciona perfeitamente)
-✅ INPI COMPLETO:
-   - Login real com credenciais (dnm48)
-   - Sessão persistente (mantém context)
-   - Busca BÁSICA correta (POST form)
-   - Timeout longo (180s)
-   - Retry em session expired
-   - Tradução PT via Groq
-   - Parse completo de resultados
-✅ Baseado em análise detalhada dos HTMLs reais do INPI!
+✅ INPI Direct Search mantido 100%
+✅ NOVO: INPI Enrichment Layer
+   - Processa BRs em batches de 5 para evitar timeout
+   - Enriquece TODAS as BRs com dados completos do INPI
+   - 18+ campos: título, resumo, inventores, depositantes, IPC, datas, etc
+   - Sleep entre batches para não sobrecarregar INPI
+   - Merge inteligente: combina EPO + INPI Direct + INPI Enriched
+   - Mantém dados mais completos em caso de duplicatas
 """
 
 from fastapi import FastAPI, HTTPException
@@ -1101,12 +1101,8 @@ async def search_patents(request: SearchRequest):
         
         logger.info(f"   ✅ INPI found: {len(inpi_patents)} BR patents")
         
-        # LAYER 3b: Buscar detalhes completos INPI para BRs do EPO
-        # TEMPORARILY DISABLED - Performance issue with 20+ BRs
-        logger.info("🔍 LAYER 3b: INPI Details for EPO BRs (SKIPPED for performance)")
-        inpi_enriched = []
-        
-        # Get BR numbers from EPO families (but don't enrich them via INPI)
+        # Get BR numbers from EPO families
+        logger.info("🔍 LAYER 3b: Getting BR families from EPO")
         br_patents_from_epo = []
         for i, wo in enumerate(sorted(list(all_wos)[:100])):  # Limit to 100 WOs
             if i % 20 == 0 and i > 0:
@@ -1117,39 +1113,107 @@ async def search_patents(request: SearchRequest):
             await asyncio.sleep(0.3)
         
         br_numbers = [p["patent_number"] for p in br_patents_from_epo]
-        logger.info(f"   Found {len(br_numbers)} BRs from EPO families")
-        logger.info(f"   ⚠️  INPI enrichment SKIPPED (would take too long for {len(br_numbers)} BRs)")
+        logger.info(f"   ✅ Found {len(br_numbers)} BRs from EPO families")
         
-        # SKIP enrichment for now
-        # if br_numbers and groq_key:
-        #     try:
-        #         logger.info(f"   Enriching ALL {len(br_numbers)} BRs with complete INPI data...")
-        #         inpi_enriched = await inpi_crawler.search_by_numbers(
-        #             br_numbers,
-        #             username="dnm48",
-        #             password=INPI_PASSWORD
-        #         )
-        #         logger.info(f"   ✅ INPI enriched: {len(inpi_enriched)} BRs")
-        #     except Exception as e:
-        #         logger.error(f"   ❌ INPI enrichment error: {e}")
+        # MERGE: EPO BRs + INPI direct (before enrichment)
+        logger.info("🔀 MERGE: Combining BR sources (before INPI enrichment)")
+        all_inpi_direct = inpi_patents  # Only direct search results
+        br_patents_merged = merge_br_patents(br_patents_from_epo, all_inpi_direct)
         
-        # MERGE: EPO BRs + INPI direct + INPI enriched
-        logger.info("🔀 MERGE: Combining BR sources")
-        all_inpi = inpi_patents + inpi_enriched
-        br_patents_merged = merge_br_patents(br_patents_from_epo, all_inpi)
+        logger.info(f"   EPO BRs: {len(br_patents_from_epo)}")
+        logger.info(f"   INPI direct: {len(inpi_patents)}")
+        logger.info(f"   → Merged unique (before enrichment): {len(br_patents_merged)}")
+        
+        # ============================================================================
+        # LAYER 4: INPI ENRICHMENT - Enrich all BRs with complete INPI data
+        # ============================================================================
+        logger.info("")
+        logger.info("=" * 100)
+        logger.info("🔍 LAYER 4: INPI ENRICHMENT - Complete BR data from INPI")
+        logger.info("=" * 100)
+        
+        inpi_enriched = []
+        
+        # Get all unique BR numbers that need enrichment
+        br_numbers_to_enrich = []
+        for patent in br_patents_merged:
+            br_num = patent.get("patent_number")
+            
+            # Check if already has complete INPI data
+            has_complete_data = (
+                patent.get("source") == "INPI" and
+                patent.get("title") and
+                patent.get("abstract") and
+                patent.get("applicants") and
+                patent.get("inventors")
+            )
+            
+            if not has_complete_data and br_num:
+                br_numbers_to_enrich.append(br_num)
+        
+        logger.info(f"   📊 Total BRs: {len(br_patents_merged)}")
+        logger.info(f"   📊 BRs needing INPI enrichment: {len(br_numbers_to_enrich)}")
+        
+        if br_numbers_to_enrich and groq_key:
+            # Process in BATCHES to avoid timeout
+            BATCH_SIZE = 5  # Process 5 BRs at a time
+            batches = [br_numbers_to_enrich[i:i+BATCH_SIZE] for i in range(0, len(br_numbers_to_enrich), BATCH_SIZE)]
+            
+            logger.info(f"   🔄 Processing {len(batches)} batches of {BATCH_SIZE} BRs each...")
+            
+            for batch_idx, batch in enumerate(batches, 1):
+                try:
+                    logger.info(f"")
+                    logger.info(f"   📦 Batch {batch_idx}/{len(batches)} ({len(batch)} BRs): {', '.join(batch[:3])}{'...' if len(batch) > 3 else ''}")
+                    
+                    # Search INPI for this batch
+                    batch_results = await inpi_crawler.search_by_numbers(
+                        batch,
+                        username="dnm48",
+                        password=INPI_PASSWORD
+                    )
+                    
+                    if batch_results:
+                        inpi_enriched.extend(batch_results)
+                        logger.info(f"      ✅ Got {len(batch_results)} enriched BRs from batch {batch_idx}")
+                    else:
+                        logger.warning(f"      ⚠️  No results from batch {batch_idx}")
+                    
+                    # Sleep between batches to avoid overloading INPI
+                    if batch_idx < len(batches):
+                        await asyncio.sleep(3)
+                        
+                except Exception as e:
+                    logger.error(f"      ❌ Error in batch {batch_idx}: {e}")
+                    continue
+            
+            logger.info(f"")
+            logger.info(f"   ✅ INPI Enrichment Complete: {len(inpi_enriched)}/{len(br_numbers_to_enrich)} BRs enriched")
+        else:
+            if not groq_key:
+                logger.warning(f"   ⚠️  Groq API key not found - skipping INPI enrichment")
+            else:
+                logger.info(f"   ✅ All BRs already have complete data - skipping enrichment")
+        
+        # FINAL MERGE: Combine everything
+        logger.info("")
+        logger.info("🔀 FINAL MERGE: Combining all BR data sources")
+        all_inpi_data = inpi_patents + inpi_enriched
+        br_patents_final = merge_br_patents(br_patents_from_epo, all_inpi_data)
         
         logger.info(f"   EPO BRs: {len(br_patents_from_epo)}")
         logger.info(f"   INPI direct: {len(inpi_patents)}")
         logger.info(f"   INPI enriched: {len(inpi_enriched)}")
-        logger.info(f"   → Merged unique: {len(br_patents_merged)}")
-        
+        logger.info(f"   → Final merged unique: {len(br_patents_final)}")
+        logger.info("")
+
         # Extrair patentes dos países alvo
         patents_by_country = {cc: [] for cc in target_countries}
         seen_patents = set()
         
-        # Add merged BRs
+        # Add final merged BRs
         if "BR" in patents_by_country:
-            for patent in br_patents_merged:
+            for patent in br_patents_final:
                 pnum = patent["patent_number"]
                 if pnum not in seen_patents:
                     seen_patents.add(pnum)
@@ -1306,7 +1370,7 @@ async def search_patents(request: SearchRequest):
                 "cache_expiry_date": (datetime.now() + timedelta(days=180)).isoformat(),
                 "target_countries": target_countries,
                 "elapsed_seconds": round(elapsed, 2),
-                "version": "Pharmyrus v30.2.5-RESPONSE-FIX",
+                "version": "Pharmyrus v31.0-INPI-ENRICHMENT",
                 "sources_used": {
                     "epo_ops": True,
                     "google_patents": True,
