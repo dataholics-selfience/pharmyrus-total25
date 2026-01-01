@@ -797,88 +797,74 @@ class INPICrawler:
                     logger.error("❌ Login failed for number search")
                     return []
                 
-                # Search each BR by number - DIRECT URL approach
+                # Search each BR by number using search form
                 for i, br_number in enumerate(br_numbers, 1):
                     try:
                         logger.info(f"   📄 {i}/{len(br_numbers)}: {br_number}")
                         
-                        # DIRECT URL to patent details (skip search form!)
-                        # Extract process code from BR number (remove BR prefix and format)
-                        process_code = br_number.replace("BR", "").replace("BR", "")
+                        # Format BR number for search (remove spaces, keep only digits and letters)
+                        # Example: BR112012026584 or BRPI1011363
+                        search_term = br_number.strip()
                         
-                        # Try direct detail URL first
-                        detail_url = f"https://busca.inpi.gov.br/pePI/servlet/PatenteServletController?Action=detail&CodPedido={process_code}"
+                        # Go to search page
+                        await self.page.goto(
+                            "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
+                            wait_until='networkidle',
+                            timeout=30000
+                        )
+                        await asyncio.sleep(1)
                         
-                        try:
-                            await self.page.goto(detail_url, wait_until='networkidle', timeout=30000)
-                            await asyncio.sleep(2)
+                        # Fill search form with BR number
+                        await self.page.fill('input[name="ExpressaoPesquisa"]', search_term, timeout=10000)
+                        
+                        # Select "Numero" field for search
+                        await self.page.select_option('select[name="Coluna"]', 'Numero', timeout=10000)
+                        
+                        # Select "todas as palavras" 
+                        await self.page.select_option('select[name="FormaPesquisa"]', 'todasPalavras', timeout=10000)
+                        
+                        # Click Search
+                        await self.page.click('input[type="submit"][name="botao"]', timeout=10000)
+                        await self.page.wait_for_load_state('networkidle', timeout=30000)
+                        await asyncio.sleep(2)
+                        
+                        # Check results
+                        content = await self.page.content()
+                        
+                        if "Nenhum resultado foi encontrado" in content:
+                            logger.warning(f"      ⚠️  No results found for {br_number}")
+                            continue
+                        
+                        # Find and click detail link
+                        if "Action=detail" in content:
+                            soup = BeautifulSoup(content, 'html.parser')
+                            first_link = soup.find('a', href=re.compile(r'Action=detail'))
                             
-                            content = await self.page.content()
-                            
-                            # Check if we got the detail page
-                            if "(21)" in content or "Título" in content:
-                                # Success! Parse details
+                            if first_link:
+                                # Click to go to detail page
+                                await self.page.click(f'a[href*="Action=detail"]', timeout=10000)
+                                await self.page.wait_for_load_state('networkidle', timeout=30000)
+                                await asyncio.sleep(2)
+                                
+                                # Parse details
                                 details = await self._parse_patent_details(br_number)
                                 if details and details.get('patent_number'):
                                     details['source'] = 'INPI'
                                     all_patents.append(details)
-                                    logger.info(f"      ✅ Direct URL worked!")
-                                    await asyncio.sleep(1)
-                                    continue
-                        except Exception as e:
-                            logger.warning(f"      ⚠️  Direct URL failed: {e}")
+                                    logger.info(f"      ✅ Got details for {br_number}")
+                                else:
+                                    logger.warning(f"      ⚠️  Could not parse details for {br_number}")
+                            else:
+                                logger.warning(f"      ⚠️  Could not find detail link for {br_number}")
+                        else:
+                            logger.warning(f"      ⚠️  No detail link in results for {br_number}")
                         
-                        # Fallback: Use search form (but with timeout!)
-                        try:
-                            await self.page.goto(
-                                "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
-                                wait_until='networkidle',
-                                timeout=30000
-                            )
-                            await asyncio.sleep(1)
-                            
-                            # Fill and submit
-                            await self.page.fill('input[name="ExpressaoPesquisa"]', br_number)
-                            
-                            # Try to select Numero option (with timeout)
-                            try:
-                                await self.page.select_option('select[name="Coluna"]', 'Numero', timeout=5000)
-                            except:
-                                # If Numero fails, try Titulo as fallback
-                                try:
-                                    await self.page.select_option('select[name="Coluna"]', 'Titulo', timeout=5000)
-                                except:
-                                    logger.warning(f"      ⚠️  Could not select search field, skipping {br_number}")
-                                    continue
-                            
-                            await self.page.click('input[type="submit"][name="botao"]')
-                            await self.page.wait_for_load_state('networkidle', timeout=30000)
-                            await asyncio.sleep(2)
-                            
-                            content = await self.page.content()
-                            
-                            # If results found, click first one
-                            if "Action=detail" in content:
-                                soup = BeautifulSoup(content, 'html.parser')
-                                first_link = soup.find('a', href=re.compile(r'Action=detail'))
-                                if first_link:
-                                    await self.page.click(f'a[href*="Action=detail"]', timeout=10000)
-                                    await self.page.wait_for_load_state('networkidle', timeout=30000)
-                                    await asyncio.sleep(2)
-                                    
-                                    # Parse details
-                                    details = await self._parse_patent_details(br_number)
-                                    if details and details.get('patent_number'):
-                                        details['source'] = 'INPI'
-                                        all_patents.append(details)
-                        
-                        except Exception as e:
-                            logger.error(f"      ❌ Search form failed: {e}")
-                        
-                        await asyncio.sleep(2)  # Rate limit
+                        await asyncio.sleep(2)  # Rate limit between searches
                         
                     except Exception as e:
-                        logger.error(f"      ❌ Error for {br_number}: {e}")
+                        logger.error(f"      ❌ Error searching {br_number}: {str(e)}")
+                        import traceback
+                        logger.error(f"      Traceback: {traceback.format_exc()}")
                         continue
                 
                 await self.browser.close()
