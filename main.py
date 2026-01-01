@@ -1102,10 +1102,11 @@ async def search_patents(request: SearchRequest):
         logger.info(f"   ✅ INPI found: {len(inpi_patents)} BR patents")
         
         # LAYER 3b: Buscar detalhes completos INPI para BRs do EPO
-        logger.info("🔍 LAYER 3b: INPI Details for EPO BRs")
+        # TEMPORARILY DISABLED - Performance issue with 20+ BRs
+        logger.info("🔍 LAYER 3b: INPI Details for EPO BRs (SKIPPED for performance)")
         inpi_enriched = []
         
-        # Get BR numbers from EPO families
+        # Get BR numbers from EPO families (but don't enrich them via INPI)
         br_patents_from_epo = []
         for i, wo in enumerate(sorted(list(all_wos)[:100])):  # Limit to 100 WOs
             if i % 20 == 0 and i > 0:
@@ -1117,18 +1118,20 @@ async def search_patents(request: SearchRequest):
         
         br_numbers = [p["patent_number"] for p in br_patents_from_epo]
         logger.info(f"   Found {len(br_numbers)} BRs from EPO families")
+        logger.info(f"   ⚠️  INPI enrichment SKIPPED (would take too long for {len(br_numbers)} BRs)")
         
-        if br_numbers and groq_key:
-            try:
-                logger.info(f"   Enriching ALL {len(br_numbers)} BRs with complete INPI data...")
-                inpi_enriched = await inpi_crawler.search_by_numbers(
-                    br_numbers,  # TODOS, sem limite!
-                    username="dnm48",
-                    password=INPI_PASSWORD
-                )
-                logger.info(f"   ✅ INPI enriched: {len(inpi_enriched)} BRs")
-            except Exception as e:
-                logger.error(f"   ❌ INPI enrichment error: {e}")
+        # SKIP enrichment for now
+        # if br_numbers and groq_key:
+        #     try:
+        #         logger.info(f"   Enriching ALL {len(br_numbers)} BRs with complete INPI data...")
+        #         inpi_enriched = await inpi_crawler.search_by_numbers(
+        #             br_numbers,
+        #             username="dnm48",
+        #             password=INPI_PASSWORD
+        #         )
+        #         logger.info(f"   ✅ INPI enriched: {len(inpi_enriched)} BRs")
+        #     except Exception as e:
+        #         logger.error(f"   ❌ INPI enrichment error: {e}")
         
         # MERGE: EPO BRs + INPI direct + INPI enriched
         logger.info("🔀 MERGE: Combining BR sources")
