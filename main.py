@@ -1466,45 +1466,9 @@ async def search_patents(request: SearchRequest):
         # NOVO v31.0.4: Aplicar consolidação WO-centric
         logger.info("🔄 Applying WO-centric consolidation...")
         try:
-            # Preparar estrutura compatível com o consolidador
-            raw_for_consolidation = {
-                'executive_summary': {
-                    'molecule_name': molecule,
-                    'commercial_name': molecule.title(),
-                    'generic_name': molecule.upper(),
-                    'clinical_trials_data': {},
-                    'fda_data': {},
-                    'total_families': len(patent_families),
-                    'consistency_score': 85.0
-                },
-                'search_result': {
-                    'molecule': molecule,
-                    'total_patents_found': len(all_patents),
-                    'total_families': len(patent_families),
-                    'patents': all_patents,
-                    'families': [
-                        {
-                            'family_id': f"family_{i}",
-                            'members': family.get('nationals', [])
-                        }
-                        for i, family in enumerate(patent_families)
-                    ],
-                    'search_engines_used': ['EPO OPS', 'Google Patents', 'INPI'],
-                    'search_timestamp': datetime.now().isoformat(),
-                    'warnings': [],
-                    'errors': []
-                },
-                'inpi_results': response_data['patent_discovery'].get('patents_by_country', {}).get('BR', []),
-                'validation_report': {},
-                'statistics': {},
-                'orange_book_entries': []
-            }
-            
-            # Aplicar consolidação
-            consolidated_response = build_pharmyrus_output(raw_for_consolidation)
-            
-            # Mesclar com dados originais de P&D
-            consolidated_response['research_and_development'] = response_data['research_and_development']
+            # Passar estrutura completa para o consolidador
+            # O consolidador agora sabe extrair de patent_discovery
+            consolidated_response = build_pharmyrus_output(response_data)
             
             logger.info("   ✅ WO-centric consolidation applied successfully")
             logger.info(f"🎉 Search complete in {elapsed:.2f}s!")
@@ -1512,7 +1476,7 @@ async def search_patents(request: SearchRequest):
             return consolidated_response
             
         except Exception as consolidation_error:
-            logger.error(f"⚠️ Consolidation failed: {consolidation_error}")
+            logger.error(f"⚠️ Consolidation failed: {consolidation_error}", exc_info=True)
             logger.info("   Returning original format")
             logger.info(f"🎉 Search complete in {elapsed:.2f}s!")
             return response_data
