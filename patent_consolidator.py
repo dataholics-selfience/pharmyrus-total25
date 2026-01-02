@@ -141,9 +141,13 @@ class PatentConsolidator:
                     'cpc_classifications': wo.get('cpc_classifications', [])
                 }
         
-        # 2. WOs referenciados em wo_related
+        # 2. WOs referenciados nas patentes
         for patent in all_patents:
-            wo_related = patent.get('wo_related')
+            wo_related = (
+                patent.get('wo_related') or 
+                patent.get('wo_number') or 
+                patent.get('wo_primary')
+            )
             if wo_related and wo_related not in wo_patents:
                 wo_patents[wo_related] = {
                     'publication_number': wo_related,
@@ -166,7 +170,11 @@ class PatentConsolidator:
         for family in families:
             members = family.get('members', [])
             for member in members:
-                wo_related = member.get('wo_related')
+                wo_related = (
+                    member.get('wo_related') or 
+                    member.get('wo_number') or 
+                    member.get('wo_primary')
+                )
                 if wo_related and wo_related not in wo_patents:
                     wo_patents[wo_related] = {
                         'publication_number': wo_related,
@@ -198,8 +206,12 @@ class PatentConsolidator:
             if jurisdiction == 'WO':
                 continue
             
-            # Encontrar WO relacionado
-            wo_related = patent.get('wo_related')
+            # Encontrar WO relacionado (pode estar em wo_number, wo_primary ou wo_related)
+            wo_related = (
+                patent.get('wo_related') or 
+                patent.get('wo_number') or 
+                patent.get('wo_primary')
+            )
             
             if wo_related:
                 nationals_by_wo[wo_related].append({
