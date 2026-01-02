@@ -200,7 +200,12 @@ class PatentConsolidator:
         nationals_by_wo = defaultdict(list)
         
         for patent in all_patents:
-            jurisdiction = patent.get('jurisdiction')
+            # Tentar extrair jurisdiction de vários campos possíveis
+            jurisdiction = (
+                patent.get('jurisdiction') or 
+                patent.get('country') or 
+                patent.get('country_code')
+            )
             
             # Pular WOs (já processados separadamente)
             if jurisdiction == 'WO':
@@ -238,8 +243,15 @@ class PatentConsolidator:
             patent = nat['patent_data']
             
             # Estrutura consolidada
+            # Extrair número da patente de múltiplos campos possíveis
+            patent_num = (
+                patent.get('patent_number') or 
+                patent.get('publication_number') or
+                patent.get('application_number')
+            )
+            
             entry = {
-                'patent_number': patent.get('publication_number'),
+                'patent_number': patent_num,
                 'jurisdiction': jur,
                 'patent_type': patent.get('patent_type'),
                 'legal_status': patent.get('legal_status'),
@@ -247,10 +259,10 @@ class PatentConsolidator:
                 'bibliographic_data': {
                     'title': patent.get('title'),
                     'abstract': patent.get('abstract'),
-                    'assignees': patent.get('assignees', []),
+                    'assignees': patent.get('assignees', []) or patent.get('applicants', []),
                     'inventors': patent.get('inventors', []),
-                    'ipc_classifications': patent.get('ipc_classifications', []),
-                    'cpc_classifications': patent.get('cpc_classifications', [])
+                    'ipc_classifications': patent.get('ipc_classifications', []) or patent.get('ipc_codes', []),
+                    'cpc_classifications': patent.get('cpc_classifications', []) or patent.get('cpc_codes', [])
                 },
                 
                 'dates': {
@@ -258,20 +270,31 @@ class PatentConsolidator:
                     'filing_date': patent.get('filing_date'),
                     'publication_date': patent.get('publication_date'),
                     'grant_date': patent.get('grant_date'),
-                    'expiration_date': patent.get('expiry_date')
+                    'expiration_date': patent.get('expiration_date') or patent.get('expiry_date')
                 },
                 
                 'family_data': {
                     'family_id': patent.get('family_id'),
                     'family_members': patent.get('family_members', []),
-                    'wo_related': patent.get('wo_related'),
+                    'wo_related': (
+                        patent.get('wo_related') or 
+                        patent.get('wo_number') or 
+                        patent.get('wo_primary')
+                    ),
                     'worldwide_applications': patent.get('worldwide_applications', [])
                 },
                 
                 'urls': {
-                    'source_url': patent.get('source_url'),
-                    'link_google_patents': f"https://patents.google.com/patent/{patent.get('publication_number')}" 
-                        if patent.get('publication_number') else None
+                    'source_url': (
+                        patent.get('source_url') or 
+                        patent.get('link_espacenet') or
+                        patent.get('link_google_patents') or
+                        patent.get('link_national')
+                    ),
+                    'link_google_patents': (
+                        patent.get('link_google_patents') or
+                        (f"https://patents.google.com/patent/{patent_num}" if patent_num else None)
+                    )
                 },
                 
                 'citations': {
