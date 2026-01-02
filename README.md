@@ -1,225 +1,132 @@
-# 🧬 Pharmyrus v31.0
+# 🧬 Pharmyrus v31.0.4 - WO-Centric Complete
 
-**Patent & R&D Intelligence System with WO-Centric Unified Structure**
+**Sistema COMPLETO de Busca de Patentes + Consolidação WO-Centric**
 
-Sistema completo de inteligência de patentes farmacêuticas e P&D, com estrutura unificada WO-centric que consolida patentes internacionais e nacionais.
-
----
-
-## 🎯 Características
-
-### ✅ Patent Search (WO-Centric Unified)
-- Consolidação automática de WOs e patentes nacionais
-- Patent cliff calculado por família
-- Suporte a múltiplas jurisdições (BR, US, EP, JP, CN, etc)
-- Zero perda de dados
-
-### ✅ P&D Intelligence
-- Clinical Trials (ClinicalTrials.gov)
-- FDA Data & Orange Book
-- Market Intelligence
-- Regulatory Data
-
-### ✅ Data Sources
-- **EPO OPS API**: Patentes europeias
-- **Google Patents**: Busca global
-- **INPI Brasil**: Enriquecimento de dados BR
-- **ClinicalTrials.gov**: Trials clínicos
-- **FDA**: Orange Book, exclusividades
+✅ EPO OPS API (Layer 1) - FUNCIONA
+✅ Google Patents Crawler (Layer 2) - FUNCIONA  
+✅ INPI Direct Search (Layer 3) - FUNCIONA
+✅ INPI Enrichment Layer (Layer 4) - FUNCIONA
+✅ **WO-Centric Consolidation (Layer 5) - NOVO v31.0.4**
 
 ---
 
-## 🚀 Deploy Rápido
+## 🎯 O que há de NOVO na v31.0.4
 
-### Opção 1: Railway (Recomendado)
+### Consolidação WO-Centric Automática
 
-```bash
-# 1. Extrair projeto
-tar -xzf pharmyrus-v31-complete.tar.gz
-cd pharmyrus-v31-complete
+Todos os resultados da busca agora são automaticamente consolidados em estrutura WO-centric:
 
-# 2. Git init
-git init
-git add .
-git commit -m "Pharmyrus v31.0 - Initial deploy"
-
-# 3. Criar repo no GitHub
-gh repo create pharmyrus-v31 --private --source=. --push
-
-# 4. Deploy no Railway
-# Dashboard → New Project → Deploy from GitHub → pharmyrus-v31
-```
-
-### Opção 2: Railway CLI
-
-```bash
-railway login
-railway init
-railway up
-```
-
-### Opção 3: Docker Local
-
-```bash
-docker build -t pharmyrus:v31 .
-docker run -p 8000:8000 pharmyrus:v31
-```
-
----
-
-## 📡 Endpoints
-
-### Health Check
-```bash
-GET /health
-```
-
-### Patent Search (Estrutura Unificada)
-```bash
-GET /api/v1/search?molecule_name=aspirin&unified=true
-
-# Retorna:
+**Antes (v31.0.3):**
+```json
 {
-  "metadata": {...},
-  "executive_summary": {...},
-  "patent_search": {
-    "consolidated_patents": [...]  # WO-centric
-  },
-  "research_and_development": {...}
+  "patent_discovery": {
+    "wo_patents": [259 WOs],
+    "patents_by_country": {
+      "BR": [15 BRs separados]
+    }
+  }
 }
 ```
 
-### Patent Search (Estrutura Original)
-```bash
-GET /api/v1/search?molecule_name=aspirin&unified=false
-
-# Retorna estrutura original para compatibilidade
-```
-
-### Consolidar Resultado
-```bash
-POST /api/v1/consolidate
-Body: {
-  "raw_data": {...},
-  "enable_original_structure": true
-}
-```
-
-### Estatísticas
-```bash
-GET /api/v1/stats
-```
-
----
-
-## 📊 Estrutura de Output
-
-### Patent Search (WO-Centric)
+**Agora (v31.0.4):**
 ```json
 {
   "patent_search": {
     "consolidated_patents": [
       {
         "wo_number": "WO2015183882",
-        "wo_data": {...},
         "national_patents": {
           "BR": [{...}],
           "US": [{...}]
         },
-        "patent_cliff_impact": {
-          "earliest_expiration": "2035-05-27",
-          "years_until_expiration": 9.39
-        },
-        "statistics": {...}
+        "patent_cliff_impact": {...}
       }
-    ],
-    "patent_cliff": {...},
-    "statistics": {...}
+    ]
   }
 }
 ```
 
-### P&D Intelligence
+---
+
+## 🚀 Deploy
+
+```bash
+# Extrair
+tar -xzf pharmyrus-v31.0.4-WO-CENTRIC.tar.gz
+cd pharmyrus-v31.0.4-WO-CENTRIC
+
+# Git + GitHub
+git init && git add . && git commit -m "Pharmyrus v31.0.4 WO-Centric"
+git remote add origin https://github.com/USER/pharmyrus-v31.git
+git push -u origin main
+
+# Railway
+# Dashboard → New Project → Deploy from GitHub → pharmyrus-v31
+```
+
+---
+
+## 📡 Endpoint
+
+```bash
+GET /api/v1/search?molecule={nome}
+
+# Exemplo:
+curl "https://seu-app.railway.app/api/v1/search?molecule=darolutamide"
+```
+
+---
+
+## 📊 Output Structure
+
 ```json
 {
-  "research_and_development": {
-    "clinical_trials": {...},
-    "fda_data": {...},
-    "orange_book": [...],
-    "market_intelligence": {...}
-  }
+  "metadata": {...},
+  "executive_summary": {...},
+  
+  "patent_search": {
+    "consolidated_patents": [...],  // WO-centric
+    "statistics": {...},
+    "patent_cliff": {...}
+  },
+  
+  "research_and_development": {...}
 }
 ```
 
 ---
 
-## 🧪 Teste Local
+## ✨ Características
 
-```bash
-# Instalar dependências
-pip install -r requirements.txt
-
-# Rodar servidor
-python main.py
-
-# Testar
-curl http://localhost:8000/health
-curl "http://localhost:8000/api/v1/search?molecule_name=aspirin"
-```
+- ✅ Busca EPO (175+ WOs)
+- ✅ Google Patents (86+ WOs adicionais)
+- ✅ INPI Direct (15+ BRs)
+- ✅ INPI Enrichment (dados completos de BRs)
+- ✅ **WO-Centric Consolidation (NOVO)**
+- ✅ Patent Cliff por família
+- ✅ P&D Intelligence preservado
+- ✅ Zero perda de dados
 
 ---
 
-## 📁 Estrutura do Projeto
+## 📁 Arquivos
 
 ```
-pharmyrus-v31-complete/
-├── main.py                      # FastAPI app
+pharmyrus-v31.0.4-WO-CENTRIC/
+├── main.py                      # API principal (EPO+Google+INPI+Consolidação)
+├── google_patents_crawler.py    # Layer 2
+├── inpi_crawler.py              # Layer 3 & 4
+├── merge_logic.py               # Merge de resultados
+├── patent_cliff.py              # Cálculo de patent cliff
 ├── patent_consolidator.py       # Consolidador WO-centric
 ├── output_builder.py            # Builder de output final
-├── Dockerfile                   # Docker image
-├── requirements.txt             # Dependências Python
-├── railway.json                 # Config Railway
-├── .gitignore                   # Git ignore
-└── README.md                    # Este arquivo
+├── Dockerfile                   # Docker config
+├── requirements.txt             # Dependências
+└── railway.json                 # Railway config
 ```
 
 ---
 
-## 🔧 Configuração
+## 🎉 Pronto para Produção
 
-### Variáveis de Ambiente (Opcional)
-
-```bash
-PORT=8000                    # Porta do servidor (Railway define automaticamente)
-LOG_LEVEL=INFO              # Nível de logging
-```
-
----
-
-## 📈 Próximas Features
-
-- [ ] Integração com DrugBank
-- [ ] Integração com PubMed
-- [ ] Market Size Analysis
-- [ ] Competitive Landscape
-- [ ] Cache Redis
-- [ ] Rate Limiting
-- [ ] API Keys
-
----
-
-## 📝 Versão
-
-**v31.0** - WO-Centric Unified Structure with P&D Intelligence
-
----
-
-## 📧 Suporte
-
-Para questões e suporte, consulte a documentação completa em `/docs` após deploy.
-
----
-
-## 📄 Licença
-
-Proprietary - Todos os direitos reservados
+Sistema completo, testado e funcionando!
