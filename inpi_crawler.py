@@ -776,13 +776,17 @@ class INPICrawler:
     
     async def search_by_numbers(self, br_numbers: List[str], username: str = "dnm48", password: str = "coresxxx") -> List[Dict]:
         """
-        Search INPI by patent numbers to get complete details
+        Search INPI by patent numbers using ADVANCED SEARCH
         Used to enrich BR patents found via EPO
+        
+        IMPORTANT: Must use Advanced Search page because Basic Search doesn't have "Number" field!
+        URL: https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchAvancado.jsp
+        Field: NumPedido (21) Nº do Pedido
         """
         if not br_numbers:
             return []
         
-        logger.info(f"🔍 INPI: Searching {len(br_numbers)} BRs by number")
+        logger.info(f"🔍 INPI: Searching {len(br_numbers)} BRs by number (ADVANCED SEARCH)")
         all_patents = []
         
         try:
@@ -797,33 +801,26 @@ class INPICrawler:
                     logger.error("❌ Login failed for number search")
                     return []
                 
-                # Search each BR by number using search form
+                # Search each BR by number using ADVANCED SEARCH
                 for i, br_number in enumerate(br_numbers, 1):
                     try:
                         logger.info(f"   📄 {i}/{len(br_numbers)}: {br_number}")
                         
-                        # Format BR number for search (remove spaces, keep only digits and letters)
-                        # Example: BR112012026584 or BRPI1011363
+                        # Format BR number for search (keep as is)
                         search_term = br_number.strip()
                         
-                        # Go to search page
+                        # Go to ADVANCED search page
                         await self.page.goto(
-                            "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp",
+                            "https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchAvancado.jsp",
                             wait_until='networkidle',
                             timeout=30000
                         )
                         await asyncio.sleep(1)
                         
-                        # Fill search form with BR number
-                        await self.page.fill('input[name="ExpressaoPesquisa"]', search_term, timeout=10000)
+                        # Fill NumPedido field (21) - Patent Number
+                        await self.page.fill('input[name="NumPedido"]', search_term, timeout=10000)
                         
-                        # Select "Numero" field for search
-                        await self.page.select_option('select[name="Coluna"]', 'Numero', timeout=10000)
-                        
-                        # Select "todas as palavras" 
-                        await self.page.select_option('select[name="FormaPesquisa"]', 'todasPalavras', timeout=10000)
-                        
-                        # Click Search
+                        # Click Search button
                         await self.page.click('input[type="submit"][name="botao"]', timeout=10000)
                         await self.page.wait_for_load_state('networkidle', timeout=30000)
                         await asyncio.sleep(2)
