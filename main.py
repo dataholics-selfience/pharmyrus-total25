@@ -96,13 +96,87 @@ async def health_check():
     )
 
 
+async def _process_patent_search(
+    molecule_name: str,
+    unified: bool = True,
+    raw_data: Optional[Dict[str, Any]] = None
+):
+    """
+    Processa busca de patentes (lógica compartilhada)
+    """
+    try:
+        logger.info(f"📊 Processando patentes para: {molecule_name} (unified={unified})")
+        
+        # Se raw_data foi fornecido (POST), usar ele
+        if raw_data:
+            logger.info("📥 Usando dados fornecidos no request")
+            raw_result = raw_data
+        else:
+            # Estrutura de dados vazia (GET sem dados reais ainda)
+            logger.info("📝 Criando estrutura base (dados reais serão integrados)")
+            raw_result = {
+                'executive_summary': {
+                    'molecule_name': molecule_name,
+                    'commercial_name': molecule_name.title(),
+                    'generic_name': molecule_name.upper(),
+                    'clinical_trials_data': {},
+                    'fda_data': {},
+                    'total_families': 0,
+                    'consistency_score': 0
+                },
+                'search_result': {
+                    'molecule': molecule_name,
+                    'total_patents_found': 0,
+                    'total_families': 0,
+                    'patents': [],
+                    'families': [],
+                    'search_engines_used': ['EPO', 'Google Patents', 'INPI'],
+                    'search_timestamp': datetime.now().isoformat(),
+                    'warnings': ['Sistema em modo consolidação - integre dados reais via POST'],
+                    'errors': []
+                },
+                'inpi_results': [],
+                'validation_report': {},
+                'statistics': {},
+                'orange_book_entries': []
+            }
+        
+        # Aplicar consolidação se solicitado
+        if unified:
+            logger.info("🔄 Aplicando consolidação WO-centric...")
+            try:
+                final_output = build_pharmyrus_output(raw_result)
+                logger.info("✅ Consolidação concluída com sucesso")
+                return final_output
+            except Exception as consolidation_error:
+                logger.error(f"⚠️ Erro na consolidação: {consolidation_error}")
+                logger.info("📋 Retornando dados originais devido a erro na consolidação")
+                return {
+                    'error': 'Consolidation failed',
+                    'original_data': raw_result,
+                    'consolidation_error': str(consolidation_error)
+                }
+        else:
+            logger.info("📋 Retornando estrutura original...")
+            return raw_result
+            
+    except Exception as e:
+        logger.error(f"❌ Erro no processamento: {str(e)}", exc_info=True)
+        return {
+            'error': str(e),
+            'molecule_name': molecule_name,
+            'timestamp': datetime.now().isoformat(),
+            'message': 'Erro no processamento - estrutura base retornada'
+        }
+
+
 @app.get("/api/v1/search")
-async def patent_search(
+async def patent_search_get(
     molecule_name: str = Query(..., description="Nome da molécula"),
     unified: bool = Query(True, description="Retornar estrutura unificada WO-centric")
 ):
     """
-    Busca de patentes e P&D
+    Busca de patentes e P&D (GET)
     
     **Parâmetros**:
     - molecule_name: Nome da molécula (ex: aspirin, darolutamide)
@@ -112,52 +186,62 @@ async def patent_search(
     - unified=True: Patent Search (consolidado) + P&D
     - unified=False: Estrutura original (compatibilidade)
     """
+    return await _process_patent_search(molecule_name, unified)
+
+
+@app.post("/api/v1/search")
+async def patent_search_post(request: SearchRequest):
+    """
+    Busca de patentes e P&D (POST)
+    
+    Permite enviar dados já coletados para consolidação
+    """
+    return await _process_patent_search(
+        request.molecule_name,
+        request.enable_unified
+    )
+
+
+# Rotas de compatibilidade (sem /api/v1)
+@app.get("/search")
+async def search_compat_get(
+    molecule_name: str = Query(..., description="Nome da molécula"),
+    unified: bool = Query(True, description="Retornar estrutura unificada")
+):
+    """Rota de compatibilidade - redireciona para /api/v1/search"""
+    logger.info(f"⚠️ Usando rota de compatibilidade /search -> /api/v1/search")
+    return await _process_patent_search(molecule_name, unified)
+
+
+@app.post("/search")
+async def search_compat_post(raw_data: Dict[str, Any]):
+    """
+    Rota de compatibilidade POST - aceita dados brutos para consolidação
+    """
+    logger.info(f"⚠️ Usando rota de compatibilidade POST /search")
+    
+    # Extrair molecule_name dos dados
+    molecule_name = "unknown"
+    if 'executive_summary' in raw_data:
+        molecule_name = raw_data['executive_summary'].get('molecule_name', 'unknown')
+    elif 'search_result' in raw_data:
+        molecule_name = raw_data['search_result'].get('molecule', 'unknown')
+    
+    logger.info(f"📥 Recebendo dados para consolidação: {molecule_name}")
+    
     try:
-        logger.info(f"📊 Buscando patentes para: {molecule_name} (unified={unified})")
-        
-        # AQUI SERIA A LÓGICA DE BUSCA REAL
-        # Por enquanto, retornamos exemplo
-        
-        # Estrutura de dados original (simulada)
-        raw_result = {
-            'executive_summary': {
-                'molecule_name': molecule_name,
-                'commercial_name': molecule_name.title(),
-                'generic_name': molecule_name.upper(),
-                'clinical_trials_data': {},
-                'fda_data': {},
-                'total_families': 0,
-                'consistency_score': 0
-            },
-            'search_result': {
-                'molecule': molecule_name,
-                'total_patents_found': 0,
-                'total_families': 0,
-                'patents': [],
-                'families': [],
-                'search_engines_used': ['EPO', 'Google Patents', 'INPI'],
-                'search_timestamp': datetime.now().isoformat(),
-                'warnings': [],
-                'errors': []
-            },
-            'inpi_results': [],
-            'validation_report': {},
-            'statistics': {},
-            'orange_book_entries': []
-        }
-        
-        # Aplicar consolidação se solicitado
-        if unified:
-            logger.info("🔄 Aplicando consolidação WO-centric...")
-            final_output = build_pharmyrus_output(raw_result)
-            return final_output
-        else:
-            logger.info("📋 Retornando estrutura original...")
-            return raw_result
-            
+        # Consolidar dados recebidos
+        final_output = build_pharmyrus_output(raw_data)
+        logger.info("✅ Consolidação via POST concluída")
+        return final_output
     except Exception as e:
-        logger.error(f"❌ Erro na busca: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Erro na consolidação POST: {str(e)}", exc_info=True)
+        return {
+            'success': False,
+            'error': str(e),
+            'original_data': raw_data,
+            'message': 'Erro na consolidação - retornando dados originais'
+        }
 
 
 @app.post("/api/v1/consolidate")
