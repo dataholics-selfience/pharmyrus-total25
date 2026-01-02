@@ -43,9 +43,6 @@ from merge_logic import merge_br_patents
 # Import Patent Cliff Calculator
 from patent_cliff import calculate_patent_cliff
 
-# Import WO-Centric Consolidator (v31.0.4)
-from output_builder import build_pharmyrus_output
-
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pharmyrus")
@@ -1462,24 +1459,9 @@ async def search_patents(request: SearchRequest):
         }
         
         logger.info("   ✅ Response built successfully")
+        logger.info(f"🎉 Search complete in {elapsed:.2f}s!")
         
-        # NOVO v31.0.4: Aplicar consolidação WO-centric
-        logger.info("🔄 Applying WO-centric consolidation...")
-        try:
-            # Passar estrutura completa para o consolidador
-            # O consolidador agora sabe extrair de patent_discovery
-            consolidated_response = build_pharmyrus_output(response_data)
-            
-            logger.info("   ✅ WO-centric consolidation applied successfully")
-            logger.info(f"🎉 Search complete in {elapsed:.2f}s!")
-            
-            return consolidated_response
-            
-        except Exception as consolidation_error:
-            logger.error(f"⚠️ Consolidation failed: {consolidation_error}", exc_info=True)
-            logger.info("   Returning original format")
-            logger.info(f"🎉 Search complete in {elapsed:.2f}s!")
-            return response_data
+        return response_data
 
 
 if __name__ == "__main__":
